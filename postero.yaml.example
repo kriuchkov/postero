@@ -1,0 +1,27 @@
+accounts:
+  - name: "personal"
+    provider: "gmail"
+    email: "user@example.com"
+    username: "user@example.com"
+    oauth2:
+      client_id: "your-client-id"
+      client_secret: "your-client-secret"
+    imap:
+      # password: "imap-app-password"
+      # password_cmd: ["pass", "show", "email/personal-imap"]
+    smtp:
+      # password: "smtp-app-password"
+      # password_cmd: ["pass", "show", "email/personal-smtp"]
+    # Shared fallback when both protocols use the same secret.
+    # password: "shared-app-password"
+    # password_cmd: ["pass", "show", "email/personal"]
+
+data_path: "~/.local/share/postero"
+
+# Filters allow you to process rendering of specific MIME types
+# Make sure to install the binaries (e.g., w3m) used in the commands
+filters:
+  # Render HTML emails safely using w3m:
+  text/html: "w3m -T text/html -dump"
+  # Or use lynx if you prefer:
+  # text/html: "lynx -dump -stdin"
