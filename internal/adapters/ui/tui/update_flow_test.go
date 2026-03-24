@@ -19,7 +19,7 @@ func TestComposeKeyEntersComposeState(t *testing.T) {
 	assert.Equal(t, stateCompose, updated.state)
 	assert.NotNil(t, updated.activeDraft)
 	assert.Equal(t, 0, updated.focusIndex)
-	assert.Equal(t, "", updated.activeDraft.Subject)
+	assert.Empty(t, updated.activeDraft.Subject)
 	assert.False(t, updated.composeEditing)
 }
 
@@ -65,7 +65,10 @@ func TestReplyStartsTypingAboveQuotedMessage(t *testing.T) {
 
 func TestEnterAdvancesComposeFocusBeforeBody(t *testing.T) {
 	m := testModel()
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(
+		&models.MessageDTO{AccountID: "personal", From: "me@example.com", To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"},
+		0,
+	)
 
 	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 1, updated.focusIndex)
@@ -265,7 +268,7 @@ func TestZeroAndDollarJumpByPane(t *testing.T) {
 	updated.state = stateContent
 	updated.syncContentViewport(true)
 	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyPgDown})
-	assert.Greater(t, updated.contentViewport.YOffset, 0)
+	assert.Positive(t, updated.contentViewport.YOffset)
 
 	updated = updateModel(t, updated, keyRune('0'))
 	assert.True(t, updated.contentViewport.AtTop())
@@ -315,7 +318,10 @@ func TestComposeEnterSavesAndSendsDraft(t *testing.T) {
 func TestSaveDraftCreatesDraftAndReturnsToList(t *testing.T) {
 	service := &messageServiceStub{inbox: sampleMessages(), composedDraftID: "draft-42"}
 	m := testModelWithService(service)
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"}, 1)
+	m.enterComposeState(
+		&models.MessageDTO{AccountID: "personal", From: "me@example.com", To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"},
+		1,
+	)
 
 	updatedAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	updated := updatedAny.(Model)
@@ -331,7 +337,17 @@ func TestSaveDraftCreatesDraftAndReturnsToList(t *testing.T) {
 func TestSaveDraftUpdatesExistingDraft(t *testing.T) {
 	service := &messageServiceStub{inbox: sampleMessages()}
 	m := testModelWithService(service)
-	m.enterComposeState(&models.MessageDTO{ID: "draft-1", AccountID: "personal", From: "me@example.com", To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"}, 1)
+	m.enterComposeState(
+		&models.MessageDTO{
+			ID:        "draft-1",
+			AccountID: "personal",
+			From:      "me@example.com",
+			To:        []string{"user@example.com"},
+			Subject:   "Hello",
+			Body:      "Body",
+		},
+		1,
+	)
 
 	updatedAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlO})
 	updated := updatedAny.(Model)
@@ -386,6 +402,30 @@ func TestOpeningContentMarksUnreadMessageAsRead(t *testing.T) {
 	assert.True(t, updated.messages[0].IsRead)
 }
 
+func TestEnterOpensContentForRegularMessage(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	assert.Equal(t, stateContent, updated.state)
+	assert.Equal(t, []string{"msg-1"}, service.markReadCalls)
+	assert.True(t, updated.messages[0].IsRead)
+}
+
+func TestEnterOpensSelectedMailboxFromSidebar(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateSidebar
+
+	updatedAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := updatedAny.(Model)
+
+	assert.Equal(t, stateList, updated.state)
+	require.NotNil(t, cmd)
+}
+
 func TestContentViewportScrollsWithoutChangingSelection(t *testing.T) {
 	service := &messageServiceStub{inbox: sampleLongMessage()}
 	m := testModelWithService(service)
@@ -398,7 +438,7 @@ func TestContentViewportScrollsWithoutChangingSelection(t *testing.T) {
 
 	assert.Equal(t, stateContent, updated.state)
 	assert.Equal(t, 0, updated.listCursor)
-	assert.Greater(t, updated.contentViewport.YOffset, 0)
+	assert.Positive(t, updated.contentViewport.YOffset)
 }
 
 func TestSearchModeFiltersCurrentMailboxLive(t *testing.T) {
@@ -418,7 +458,24 @@ func TestSearchModeFiltersCurrentMailboxLive(t *testing.T) {
 	assert.False(t, updated.searchActive)
 	assert.Equal(t, "2", updated.searchQuery)
 	require.Len(t, updated.messages, 1)
-	assert.Equal(t, "Search: 1 of 2 messages", updated.statusMessage)
+	assert.Equal(t, "Search: 1 of 2 messages • n/N next/prev", updated.statusMessage)
+}
+
+func TestSearchRepeatMovesAcrossFilteredResults(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+	m.searchQuery = "subject"
+	m.searchInput.SetValue("subject")
+	m.applySearchFilter()
+	require.Len(t, m.messages, 2)
+
+	updated := updateModel(t, m, keyRune('n'))
+	assert.Equal(t, 1, updated.listCursor)
+	assert.Equal(t, "msg-2", updated.messages[updated.listCursor].ID)
+
+	updated = updateModel(t, updated, keyRune('N'))
+	assert.Equal(t, 0, updated.listCursor)
+	assert.Equal(t, "msg-1", updated.messages[updated.listCursor].ID)
 }
 
 func TestSearchEscClearsFilterAndRestoresMailbox(t *testing.T) {
@@ -432,7 +489,7 @@ func TestSearchEscClearsFilterAndRestoresMailbox(t *testing.T) {
 	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 
 	assert.False(t, updated.searchActive)
-	assert.Equal(t, "", updated.searchQuery)
+	assert.Empty(t, updated.searchQuery)
 	require.Len(t, updated.messages, 2)
 	assert.Equal(t, "Search cleared", updated.statusMessage)
 }
@@ -464,7 +521,7 @@ func TestContentViewportPageDownAndTopBottomShortcuts(t *testing.T) {
 	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyPgDown})
 	assert.Equal(t, stateContent, updated.state)
 	assert.Equal(t, 0, updated.listCursor)
-	assert.Greater(t, updated.contentViewport.YOffset, 0)
+	assert.Positive(t, updated.contentViewport.YOffset)
 
 	updated = updateModel(t, updated, keyRune('G'))
 	assert.True(t, updated.contentViewport.AtBottom())
@@ -476,6 +533,140 @@ func TestContentViewportPageDownAndTopBottomShortcuts(t *testing.T) {
 	updated = updateModel(t, updated, keyRune('g'))
 	assert.True(t, updated.contentViewport.AtTop())
 	assert.Equal(t, 0, updated.listCursor)
+}
+
+func TestHMLJumpWithinVisibleListWindow(t *testing.T) {
+	service := &messageServiceStub{inbox: manyDraftMessages(20)}
+	m := testModelWithService(service)
+	m.messages = manyDraftMessages(20)
+	m.width = 120
+	m.height = 24
+	m.state = stateList
+	m.listCursor = 5
+
+	topJump := updateModel(t, m, keyRune('H'))
+	assert.Equal(t, 2, topJump.listCursor)
+
+	middleJump := updateModel(t, m, keyRune('M'))
+	assert.Equal(t, 3, middleJump.listCursor)
+
+	bottomJump := updateModel(t, m, keyRune('L'))
+	assert.Equal(t, 5, bottomJump.listCursor)
+}
+
+func TestColonOpensCommandPromptAndRunsMailboxCommand(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune(':'))
+	assert.True(t, updated.commandActive)
+	assert.False(t, updated.searchActive)
+	assert.Equal(t, ": ", updated.searchInput.Prompt)
+
+	updated.searchInput.SetValue("drafts")
+	updatedAny, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	run := updatedAny.(Model)
+
+	assert.False(t, run.commandActive)
+	assert.Equal(t, stateList, run.state)
+	assert.Equal(t, 2, run.sidebarCursor)
+	require.NotNil(t, cmd)
+}
+
+func TestColonOpensCommandPromptFromReplyMode(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+	m = updateModel(t, m, keyRune('r'))
+	require.Equal(t, stateCompose, m.state)
+	require.False(t, m.commandActive)
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	updated = updateModel(t, updated, keyRune(':'))
+
+	assert.True(t, updated.commandActive)
+	assert.Equal(t, stateCompose, updated.state)
+	assert.Equal(t, ": ", updated.searchInput.Prompt)
+
+	updated.searchInput.SetValue("drafts")
+	updatedAny, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	run := updatedAny.(Model)
+
+	assert.False(t, run.commandActive)
+	assert.Equal(t, stateList, run.state)
+	assert.Equal(t, 2, run.sidebarCursor)
+	require.NotNil(t, cmd)
+}
+
+func TestUnknownCommandShowsError(t *testing.T) {
+	m := testModel()
+	m.commandActive = true
+	m.searchInput.Prompt = ": "
+	m.searchInput.SetValue("wat")
+
+	updatedAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	updated := updatedAny.(Model)
+
+	assert.False(t, updated.commandActive)
+	assert.Equal(t, "Unknown command: wat", updated.statusMessage)
+	assert.True(t, updated.statusError)
+	assert.Nil(t, cmd)
+}
+
+func TestCommandPromptUsesHistoryWithArrowKeys(t *testing.T) {
+	m := testModel()
+	m.commandHistory = []string{"compose", "drafts", "quit"}
+	m.openCommandPrompt()
+	m.searchInput.SetValue("ref")
+	m.commandDraft = "ref"
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	assert.Equal(t, "quit", updated.searchInput.Value())
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyUp})
+	assert.Equal(t, "drafts", updated.searchInput.Value())
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyDown})
+	assert.Equal(t, "quit", updated.searchInput.Value())
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyDown})
+	assert.Equal(t, "ref", updated.searchInput.Value())
+}
+
+func TestCommandPromptTabCompletesKnownCommands(t *testing.T) {
+	m := testModel()
+	m.openCommandPrompt()
+	m.searchInput.SetValue("dr")
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "drafts", updated.searchInput.Value())
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "drafts", updated.searchInput.Value())
+}
+
+func TestCommandPromptTabCompletesEmptyToFirstCommand(t *testing.T) {
+	m := testModel()
+	m.openCommandPrompt()
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "compose", updated.searchInput.Value())
+}
+
+func TestComposeOAndOOpenBodyInNormalMode(t *testing.T) {
+	m := testModel()
+	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
+
+	updated := updateModel(t, m, keyRune('o'))
+	assert.True(t, updated.composeEditing)
+	assert.Equal(t, 3, updated.focusIndex)
+	assert.Contains(t, updated.activeDraft.Body, "Body\n")
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.False(t, updated.composeEditing)
+
+	updated = updateModel(t, updated, keyRune('O'))
+	assert.True(t, updated.composeEditing)
+	assert.Equal(t, 3, updated.focusIndex)
 }
 
 func TestDeleteKeyTogglesDeleteAndRefreshesMessages(t *testing.T) {
@@ -974,12 +1165,12 @@ func TestEscClearsActiveAccountScope(t *testing.T) {
 	updatedAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	updated := updatedAny.(Model)
 
-	assert.Equal(t, "", updated.activeAccountID)
+	assert.Empty(t, updated.activeAccountID)
 	assert.Equal(t, "Account scope cleared", updated.statusMessage)
 	require.NotNil(t, cmd)
 
 	reloaded := updateModel(t, updated, cmd())
-	assert.Equal(t, "", service.lastSearch.AccountID)
+	assert.Empty(t, service.lastSearch.AccountID)
 	assert.Equal(t, "Sent", currentMailboxTitle(reloaded))
 }
 

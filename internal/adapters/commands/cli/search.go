@@ -15,7 +15,7 @@ var searchCmd = &cobra.Command{
 	Short: "Search emails",
 	Long:  `Search emails by subject, sender, or content.`,
 	Args:  cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		query := args[0]
 		service, _, err := appcore.NewMessageService()
 		if err != nil {

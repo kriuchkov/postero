@@ -23,7 +23,7 @@ var forwardCmd = &cobra.Command{
 	Short: "Forward an email",
 	Long:  `Forward a specific email message.`,
 	Args:  cobra.MinimumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		id := args[0]
 		service, cfg, err := appcore.NewMessageService()
 		if err != nil {

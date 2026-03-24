@@ -43,7 +43,7 @@ func GetOAuthConfig(acc *OAuth2Config) *oauth2.Config {
 	}
 }
 
-func GetAuthCodeOptions(acc *OAuth2Config) []oauth2.AuthCodeOption {
+func GetAuthCodeOptions(_ *OAuth2Config) []oauth2.AuthCodeOption {
 	return []oauth2.AuthCodeOption{
 		oauth2.AccessTypeOffline,
 		oauth2.SetAuthURLParam("prompt", "consent"),

@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+//nolint:revive // exported name is kept for package-level clarity.
 func ConfigFilePath() (string, error) {
 	configDir := os.Getenv("POSTERO_CONFIG_DIR")
 	if configDir == "" {

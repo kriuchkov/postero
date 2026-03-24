@@ -2,7 +2,7 @@ package message
 
 import (
 	"context"
-	stderrors "errors"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,15 +19,15 @@ type smtpStub struct {
 	sent []*models.Message
 }
 
-func (s *smtpStub) Connect(ctx context.Context, host string, port int, username, password string, authType string, useTLS bool) error {
+func (s *smtpStub) Connect(_ context.Context, _ string, _ int, _ string, _ string, _ string, _ bool) error {
 	return nil
 }
 
-func (s *smtpStub) Disconnect(ctx context.Context) error {
+func (s *smtpStub) Disconnect(_ context.Context) error {
 	return nil
 }
 
-func (s *smtpStub) Send(ctx context.Context, message *models.Message) error {
+func (s *smtpStub) Send(_ context.Context, message *models.Message) error {
 	s.sent = append(s.sent, message)
 	return nil
 }
@@ -144,7 +144,7 @@ func TestSendMessageReturnsMessageNotFoundDomainError(t *testing.T) {
 	err := svc.SendMessage(context.Background(), "missing")
 
 	require.Error(t, err)
-	assert.True(t, stderrors.Is(err, coreerrors.ErrMessageNotFound))
+	require.ErrorIs(t, err, coreerrors.ErrMessageNotFound)
 	assert.EqualError(t, err, "message missing not found: message not found")
 }
 
@@ -159,7 +159,8 @@ func TestArchiveMessage(t *testing.T) {
 	}
 	repo.On("GetByID", context.Background(), "msg-1").Return(messageModel, nil)
 	repo.On("Save", context.Background(), mock.MatchedBy(func(message *models.Message) bool {
-		return message != nil && containsLabel(message.Labels, "archive") && !containsLabel(message.Labels, "inbox") && message.IsRead && message.Flags.Seen
+		return message != nil && containsLabel(message.Labels, "archive") && !containsLabel(message.Labels, "inbox") && message.IsRead &&
+			message.Flags.Seen
 	})).Return(nil)
 
 	svc := NewService(repo)
@@ -201,7 +202,8 @@ func TestMarkAsSpam(t *testing.T) {
 	}
 	repo.On("GetByID", context.Background(), "msg-1").Return(messageModel, nil)
 	repo.On("Save", context.Background(), mock.MatchedBy(func(message *models.Message) bool {
-		return message != nil && message.IsSpam && message.Flags.Junk && containsLabel(message.Labels, "spam") && !containsLabel(message.Labels, "inbox")
+		return message != nil && message.IsSpam && message.Flags.Junk && containsLabel(message.Labels, "spam") &&
+			!containsLabel(message.Labels, "inbox")
 	})).Return(nil)
 
 	svc := NewService(repo)
@@ -296,10 +298,5 @@ func TestGetByLabelExcludesDeletedMessages(t *testing.T) {
 }
 
 func containsLabel(labels []string, expected string) bool {
-	for _, label := range labels {
-		if label == expected {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(labels, expected)
 }

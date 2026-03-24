@@ -12,13 +12,36 @@ import (
 	"github.com/zalando/go-keyring"
 )
 
+const (
+	authTypeOAuth2       = "oauth2"
+	storageBackendSQLite = "sqlite"
+	providerGmail        = "gmail"
+	providerOutlook      = "outlook"
+	providerYahoo        = "yahoo"
+	providerICloud       = "icloud"
+	providerFastmail     = "fastmail"
+)
+
+type providerPreset struct {
+	imapHost      string
+	imapPort      int
+	imapTLS       bool
+	smtpHost      string
+	smtpPort      int
+	smtpTLS       bool
+	oauthProvider string
+	oauthScopes   []string
+	tenantID      string
+	builtInOAuth2 bool
+}
+
 type Config struct {
-	Accounts    []AccountConfig   `mapstructure:"accounts" yaml:"accounts,omitempty"`
-	Storage     StorageConfig     `mapstructure:"storage" yaml:"storage,omitempty"`
-	Theme       ThemeConfig       `mapstructure:"theme" yaml:"theme,omitempty"`
-	Keybindings KeybindingsConfig `mapstructure:"keybindings" yaml:"keybindings,omitempty"`
-	Filters     map[string]string `mapstructure:"filters" yaml:"filters,omitempty"`
-	DataPath    string            `mapstructure:"data_path" yaml:"data_path,omitempty"`
+	Accounts    []AccountConfig   `mapstructure:"accounts"     yaml:"accounts,omitempty"`
+	Storage     StorageConfig     `mapstructure:"storage"      yaml:"storage,omitempty"`
+	Theme       ThemeConfig       `mapstructure:"theme"        yaml:"theme,omitempty"`
+	Keybindings KeybindingsConfig `mapstructure:"keybindings"  yaml:"keybindings,omitempty"`
+	Filters     map[string]string `mapstructure:"filters"      yaml:"filters,omitempty"`
+	DataPath    string            `mapstructure:"data_path"    yaml:"data_path,omitempty"`
 	CustomFlags []string          `mapstructure:"custom_flags" yaml:"custom_flags,omitempty"`
 }
 
@@ -27,117 +50,164 @@ type StorageConfig struct {
 }
 
 type AccountConfig struct {
-	Name        string       `mapstructure:"name" yaml:"name,omitempty"`
-	Provider    string       `mapstructure:"provider" yaml:"provider,omitempty"`
-	Email       string       `mapstructure:"email" yaml:"email,omitempty"`
-	IMAP        IMAPConfig   `mapstructure:"imap" yaml:"imap,omitempty"`
-	SMTP        SMTPConfig   `mapstructure:"smtp" yaml:"smtp,omitempty"`
-	Username    string       `mapstructure:"username" yaml:"username,omitempty"`
-	Password    string       `mapstructure:"password" yaml:"password,omitempty"`
+	Name        string       `mapstructure:"name"         yaml:"name,omitempty"`
+	Provider    string       `mapstructure:"provider"     yaml:"provider,omitempty"`
+	Email       string       `mapstructure:"email"        yaml:"email,omitempty"`
+	IMAP        IMAPConfig   `mapstructure:"imap"         yaml:"imap,omitempty"`
+	SMTP        SMTPConfig   `mapstructure:"smtp"         yaml:"smtp,omitempty"`
+	Username    string       `mapstructure:"username"     yaml:"username,omitempty"`
+	Password    string       `mapstructure:"password"     yaml:"password,omitempty"`
 	PasswordCmd []string     `mapstructure:"password_cmd" yaml:"password_cmd,omitempty"`
-	OAuth2      OAuth2Config `mapstructure:"oauth2" yaml:"oauth2,omitempty"`
+	OAuth2      OAuth2Config `mapstructure:"oauth2"       yaml:"oauth2,omitempty"`
 }
 
 type OAuth2Config struct {
-	Provider     string   `mapstructure:"provider" yaml:"provider,omitempty"`
-	ClientID     string   `mapstructure:"client_id" yaml:"client_id,omitempty"`
+	Provider     string   `mapstructure:"provider"      yaml:"provider,omitempty"`
+	ClientID     string   `mapstructure:"client_id"     yaml:"client_id,omitempty"`
 	ClientSecret string   `mapstructure:"client_secret" yaml:"client_secret,omitempty"`
-	TenantID     string   `mapstructure:"tenant_id" yaml:"tenant_id,omitempty"` // used mainly for microsoft
-	Scopes       []string `mapstructure:"scopes" yaml:"scopes,omitempty"`
-	RedirectURL  string   `mapstructure:"redirect_url" yaml:"redirect_url,omitempty"`
+	TenantID     string   `mapstructure:"tenant_id"     yaml:"tenant_id,omitempty"` // used mainly for microsoft
+	Scopes       []string `mapstructure:"scopes"        yaml:"scopes,omitempty"`
+	RedirectURL  string   `mapstructure:"redirect_url"  yaml:"redirect_url,omitempty"`
 }
 
 type IMAPConfig struct {
-	Username    string   `mapstructure:"username" yaml:"username,omitempty"`
-	Password    string   `mapstructure:"password" yaml:"password,omitempty"`
+	Username    string   `mapstructure:"username"     yaml:"username,omitempty"`
+	Password    string   `mapstructure:"password"     yaml:"password,omitempty"`
 	PasswordCmd []string `mapstructure:"password_cmd" yaml:"password_cmd,omitempty"`
-	AuthType    string   `mapstructure:"auth_type" yaml:"auth_type,omitempty"` // e.g. "plain" (default), "oauth2"
-	Host        string   `mapstructure:"host" yaml:"host,omitempty"`
-	Port        int      `mapstructure:"port" yaml:"port,omitempty"`
-	TLS         bool     `mapstructure:"tls" yaml:"tls,omitempty"`
+	AuthType    string   `mapstructure:"auth_type"    yaml:"auth_type,omitempty"` // e.g. "plain" (default), "oauth2"
+	Host        string   `mapstructure:"host"         yaml:"host,omitempty"`
+	Port        int      `mapstructure:"port"         yaml:"port,omitempty"`
+	TLS         bool     `mapstructure:"tls"          yaml:"tls,omitempty"`
 }
 
 type SMTPConfig struct {
-	Username    string   `mapstructure:"username" yaml:"username,omitempty"`
-	Password    string   `mapstructure:"password" yaml:"password,omitempty"`
+	Username    string   `mapstructure:"username"     yaml:"username,omitempty"`
+	Password    string   `mapstructure:"password"     yaml:"password,omitempty"`
 	PasswordCmd []string `mapstructure:"password_cmd" yaml:"password_cmd,omitempty"`
-	AuthType    string   `mapstructure:"auth_type" yaml:"auth_type,omitempty"` // e.g. "plain" (default), "oauth2"
-	Host        string   `mapstructure:"host" yaml:"host,omitempty"`
-	Port        int      `mapstructure:"port" yaml:"port,omitempty"`
-	TLS         bool     `mapstructure:"tls" yaml:"tls,omitempty"`
+	AuthType    string   `mapstructure:"auth_type"    yaml:"auth_type,omitempty"` // e.g. "plain" (default), "oauth2"
+	Host        string   `mapstructure:"host"         yaml:"host,omitempty"`
+	Port        int      `mapstructure:"port"         yaml:"port,omitempty"`
+	TLS         bool     `mapstructure:"tls"          yaml:"tls,omitempty"`
 }
 
 type ThemeConfig struct {
-	Name      string `mapstructure:"name" yaml:"name,omitempty"`
-	Primary   string `mapstructure:"primary" yaml:"primary,omitempty"`
+	Name      string `mapstructure:"name"      yaml:"name,omitempty"`
+	Primary   string `mapstructure:"primary"   yaml:"primary,omitempty"`
 	Secondary string `mapstructure:"secondary" yaml:"secondary,omitempty"`
-	Text      string `mapstructure:"text" yaml:"text,omitempty"`
-	SubText   string `mapstructure:"sub_text" yaml:"sub_text,omitempty"`
+	Text      string `mapstructure:"text"      yaml:"text,omitempty"`
+	SubText   string `mapstructure:"sub_text"  yaml:"sub_text,omitempty"`
 	Highlight string `mapstructure:"highlight" yaml:"highlight,omitempty"`
-	Faint     string `mapstructure:"faint" yaml:"faint,omitempty"`
+	Faint     string `mapstructure:"faint"     yaml:"faint,omitempty"`
 }
 
 type KeybindingsConfig struct {
-	Quit     string `mapstructure:"quit" yaml:"quit,omitempty"`
-	Refresh  string `mapstructure:"refresh" yaml:"refresh,omitempty"`
-	Compose  string `mapstructure:"compose" yaml:"compose,omitempty"`
-	Reply    string `mapstructure:"reply" yaml:"reply,omitempty"`
-	Forward  string `mapstructure:"forward" yaml:"forward,omitempty"`
-	Search   string `mapstructure:"search" yaml:"search,omitempty"`
-	Delete   string `mapstructure:"delete" yaml:"delete,omitempty"`
+	Quit     string `mapstructure:"quit"      yaml:"quit,omitempty"`
+	Refresh  string `mapstructure:"refresh"   yaml:"refresh,omitempty"`
+	Compose  string `mapstructure:"compose"   yaml:"compose,omitempty"`
+	Reply    string `mapstructure:"reply"     yaml:"reply,omitempty"`
+	Forward  string `mapstructure:"forward"   yaml:"forward,omitempty"`
+	Search   string `mapstructure:"search"    yaml:"search,omitempty"`
+	Delete   string `mapstructure:"delete"    yaml:"delete,omitempty"`
 	MarkRead string `mapstructure:"mark_read" yaml:"mark_read,omitempty"`
 }
 
 func LoadConfig() (*Config, error) {
-	configDir := os.Getenv("POSTERO_CONFIG_DIR")
-	if configDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, err
-		}
-		configDir = filepath.Join(home, ".config", "postero")
-	}
-
-	viper.SetConfigName("config")
-	viper.SetConfigType("yaml")
-	viper.AddConfigPath(configDir)
-	viper.AddConfigPath(".")
-
-	viper.SetEnvPrefix("POSTERO")
-	viper.AutomaticEnv()
-
-	// Set defaults
-	viper.SetDefault("storage.backend", "sqlite")
-	viper.SetDefault("theme.name", "dark")
-	viper.SetDefault("theme.primary", "#FF00FF")
-	viper.SetDefault("theme.secondary", "#00FFFF")
-	viper.SetDefault("theme.text", "#F6F6F6")
-	viper.SetDefault("theme.sub_text", "#B8B8B8")
-	viper.SetDefault("theme.highlight", "#FFFFFF")
-	viper.SetDefault("theme.faint", "#4A4A4A")
-	viper.SetDefault("data_path", filepath.Join(configDir, "data"))
-
-	if err := viper.ReadInConfig(); err != nil {
-		var configNotFound viper.ConfigFileNotFoundError
-		if !stderrors.As(err, &configNotFound) {
-			return nil, err
-		}
-	}
-
-	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
+	configPath, err := ConfigFilePath()
+	if err != nil {
 		return nil, err
 	}
 
-	for index := range cfg.Accounts {
-		applyAccountDefaults(&cfg.Accounts[index])
+	v := newConfigViper(configPath)
+	if err := readOrCreateConfigFile(v, configPath); err != nil {
+		return nil, err
 	}
 
+	cfg, err := decodeConfig(v)
+	if err != nil {
+		return nil, err
+	}
+
+	applyConfigDefaults(cfg)
+	return cfg, nil
+}
+
+func newConfigViper(configPath string) *viper.Viper {
+	configDir := filepath.Dir(configPath)
+
+	v := viper.New()
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath(configDir)
+	v.AddConfigPath(".")
+
+	v.SetEnvPrefix("POSTERO")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	setConfigDefaults(v, configDir)
+	return v
+}
+
+func readOrCreateConfigFile(v *viper.Viper, configPath string) error {
+	if err := v.ReadInConfig(); err != nil {
+		var configNotFound viper.ConfigFileNotFoundError
+		if !stderrors.As(err, &configNotFound) && !os.IsNotExist(err) {
+			return err
+		}
+
+		configDir := filepath.Dir(configPath)
+		if err := os.MkdirAll(configDir, 0o700); err != nil {
+			return err
+		}
+		materializeEffectiveConfig(v)
+		if err := v.WriteConfigAs(configPath); err != nil {
+			return err
+		}
+	} else {
+		materializeEffectiveConfig(v)
+	}
+
+	return nil
+}
+
+func decodeConfig(v *viper.Viper) (*Config, error) {
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
+func applyConfigDefaults(cfg *Config) {
+	for index := range cfg.Accounts {
+		applyAccountDefaults(&cfg.Accounts[index])
+	}
+}
+
 func UsedConfigFile() string {
-	return viper.ConfigFileUsed()
+	path, err := ConfigFilePath()
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+func setConfigDefaults(v *viper.Viper, configDir string) {
+	v.SetDefault("storage.backend", storageBackendSQLite)
+	v.SetDefault("theme.name", "dark")
+	v.SetDefault("theme.primary", "#FF00FF")
+	v.SetDefault("theme.secondary", "#00FFFF")
+	v.SetDefault("theme.text", "#F6F6F6")
+	v.SetDefault("theme.sub_text", "#B8B8B8")
+	v.SetDefault("theme.highlight", "#FFFFFF")
+	v.SetDefault("theme.faint", "#4A4A4A")
+	v.SetDefault("data_path", filepath.Join(configDir, "data"))
+}
+
+func materializeEffectiveConfig(v *viper.Viper) {
+	for _, key := range v.AllKeys() {
+		v.Set(key, v.Get(key))
+	}
 }
 
 func applyAccountDefaults(account *AccountConfig) {
@@ -169,66 +239,45 @@ func applyProviderDefaults(account *AccountConfig) {
 	}
 
 	provider := canonicalProvider(account)
-	switch provider {
-	case "gmail":
-		applyProviderNetworkDefaults(&account.IMAP, "imap.gmail.com", 993, true)
-		applyProviderNetworkDefaults(&account.SMTP, "smtp.gmail.com", 587, true)
-		if account.OAuth2.Provider == "" {
-			account.OAuth2.Provider = "google"
+	preset, ok := providerPresetFor(provider)
+	if !ok {
+		return
+	}
+
+	applyIMAPNetworkDefaults(&account.IMAP, preset.imapHost, preset.imapPort, preset.imapTLS)
+	applySMTPNetworkDefaults(&account.SMTP, preset.smtpHost, preset.smtpPort, preset.smtpTLS)
+	if account.OAuth2.Provider == "" && preset.oauthProvider != "" {
+		account.OAuth2.Provider = preset.oauthProvider
+	}
+	if usesOAuth2(account) {
+		applyOAuthDefaults(account, authTypeOAuth2, preset.oauthScopes)
+		if account.OAuth2.TenantID == "" && preset.tenantID != "" {
+			account.OAuth2.TenantID = preset.tenantID
 		}
-		if usesOAuth2(account) {
-			applyOAuthDefaults(account, "oauth2", []string{"https://mail.google.com/"})
-		}
-	case "outlook":
-		applyProviderNetworkDefaults(&account.IMAP, "outlook.office365.com", 993, true)
-		applyProviderNetworkDefaults(&account.SMTP, "smtp.office365.com", 587, true)
-		if account.OAuth2.Provider == "" {
-			account.OAuth2.Provider = "microsoft"
-		}
-		if usesOAuth2(account) {
-			applyOAuthDefaults(account, "oauth2", []string{
-				"https://outlook.office.com/IMAP.AccessAsUser.All",
-				"https://outlook.office.com/SMTP.Send",
-				"offline_access",
-			})
-			if account.OAuth2.TenantID == "" {
-				account.OAuth2.TenantID = "common"
-			}
-		}
-	case "yahoo":
-		applyProviderNetworkDefaults(&account.IMAP, "imap.mail.yahoo.com", 993, true)
-		applyProviderNetworkDefaults(&account.SMTP, "smtp.mail.yahoo.com", 465, true)
-	case "icloud":
-		applyProviderNetworkDefaults(&account.IMAP, "imap.mail.me.com", 993, true)
-		applyProviderNetworkDefaults(&account.SMTP, "smtp.mail.me.com", 587, true)
-	case "fastmail":
-		applyProviderNetworkDefaults(&account.IMAP, "imap.fastmail.com", 993, true)
-		applyProviderNetworkDefaults(&account.SMTP, "smtp.fastmail.com", 465, true)
 	}
 }
 
-func applyProviderNetworkDefaults(cfg interface{}, host string, port int, useTLS bool) {
-	switch value := cfg.(type) {
-	case *IMAPConfig:
-		if value.Host == "" {
-			value.Host = host
-		}
-		if value.Port == 0 {
-			value.Port = port
-		}
-		if !value.TLS {
-			value.TLS = useTLS
-		}
-	case *SMTPConfig:
-		if value.Host == "" {
-			value.Host = host
-		}
-		if value.Port == 0 {
-			value.Port = port
-		}
-		if !value.TLS {
-			value.TLS = useTLS
-		}
+func applyIMAPNetworkDefaults(cfg *IMAPConfig, host string, port int, useTLS bool) {
+	if cfg.Host == "" {
+		cfg.Host = host
+	}
+	if cfg.Port == 0 {
+		cfg.Port = port
+	}
+	if !cfg.TLS {
+		cfg.TLS = useTLS
+	}
+}
+
+func applySMTPNetworkDefaults(cfg *SMTPConfig, host string, port int, useTLS bool) {
+	if cfg.Host == "" {
+		cfg.Host = host
+	}
+	if cfg.Port == 0 {
+		cfg.Port = port
+	}
+	if !cfg.TLS {
+		cfg.TLS = useTLS
 	}
 }
 
@@ -249,7 +298,7 @@ func usesOAuth2(account *AccountConfig) bool {
 		return false
 	}
 
-	if account.IMAP.AuthType == "oauth2" || account.SMTP.AuthType == "oauth2" {
+	if account.IMAP.AuthType == authTypeOAuth2 || account.SMTP.AuthType == authTypeOAuth2 {
 		return true
 	}
 
@@ -262,17 +311,8 @@ func canonicalProvider(account *AccountConfig) string {
 	}
 
 	for _, candidate := range []string{account.Provider, account.OAuth2.Provider, inferredProviderFromEmail(account.Email)} {
-		switch canonicalProviderName(candidate) {
-		case "gmail":
-			return "gmail"
-		case "outlook":
-			return "outlook"
-		case "yahoo":
-			return "yahoo"
-		case "icloud":
-			return "icloud"
-		case "fastmail":
-			return "fastmail"
+		if provider := canonicalProviderName(candidate); provider != "" {
+			return provider
 		}
 	}
 
@@ -282,49 +322,45 @@ func canonicalProvider(account *AccountConfig) string {
 func canonicalProviderName(value string) string {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "gmail", "google":
-		return "gmail"
+		return providerGmail
 	case "outlook", "microsoft", "office365", "m365":
-		return "outlook"
+		return providerOutlook
 	case "yahoo", "ymail":
-		return "yahoo"
+		return providerYahoo
 	case "icloud", "me", "mac":
-		return "icloud"
+		return providerICloud
 	case "fastmail":
-		return "fastmail"
+		return providerFastmail
 	default:
 		return ""
 	}
 }
 
 func inferredProviderFromEmail(email string) string {
-	parts := strings.Split(strings.TrimSpace(strings.ToLower(email)), "@")
-	if len(parts) != 2 {
+	_, domain, ok := strings.Cut(strings.TrimSpace(strings.ToLower(email)), "@")
+	if !ok {
 		return ""
 	}
 
-	switch parts[1] {
+	switch domain {
 	case "gmail.com", "googlemail.com":
-		return "gmail"
+		return providerGmail
 	case "outlook.com", "hotmail.com", "live.com", "msn.com":
-		return "outlook"
+		return providerOutlook
 	case "yahoo.com", "ymail.com":
-		return "yahoo"
+		return providerYahoo
 	case "icloud.com", "me.com", "mac.com":
-		return "icloud"
+		return providerICloud
 	case "fastmail.com":
-		return "fastmail"
+		return providerFastmail
 	default:
 		return ""
 	}
 }
 
 func SupportsBuiltInOAuth2(provider string) bool {
-	switch canonicalProviderName(provider) {
-	case "gmail", "outlook":
-		return true
-	default:
-		return false
-	}
+	preset, ok := providerPresetFor(canonicalProviderName(provider))
+	return ok && preset.builtInOAuth2
 }
 
 func NormalizeProviderName(provider string) string {
@@ -333,42 +369,26 @@ func NormalizeProviderName(provider string) string {
 
 func StorageBackend(cfg *Config) string {
 	if cfg == nil {
-		return "sqlite"
+		return storageBackendSQLite
 	}
 	backend := strings.TrimSpace(strings.ToLower(cfg.Storage.Backend))
 	if backend == "" {
-		return "sqlite"
+		return storageBackendSQLite
 	}
 	return backend
 }
 
 func (a AccountConfig) IMAPCredentials() (string, string) {
-	username := a.IMAP.Username
-	if username == "" {
-		username = a.Username
-	}
-	if username == "" {
-		username = a.Email
-	}
-	password := a.IMAP.Password
-	if password == "" {
-		password = a.Password
-	}
-	return username, password
+	return accountCredentials(a.IMAP.Username, a.IMAP.Password, a)
 }
 
 func (a AccountConfig) SMTPCredentials() (string, string) {
-	username := a.SMTP.Username
-	if username == "" {
-		username = a.Username
-	}
-	if username == "" {
-		username = a.Email
-	}
-	password := a.SMTP.Password
-	if password == "" {
-		password = a.Password
-	}
+	return accountCredentials(a.SMTP.Username, a.SMTP.Password, a)
+}
+
+func accountCredentials(protocolUsername, protocolPassword string, account AccountConfig) (string, string) {
+	username := firstNonEmpty(protocolUsername, account.Username, account.Email)
+	password := firstNonEmpty(protocolPassword, account.Password)
 	return username, password
 }
 
@@ -382,7 +402,7 @@ func execPasswordCmd(cmdArgs []string) string {
 		return ""
 	}
 
-	cmd := exec.Command(binary, cmdArgs[1:]...) //nolint:gosec // Command comes from the user's local config.
+	cmd := exec.CommandContext(context.Background(), binary, cmdArgs[1:]...)
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -395,31 +415,12 @@ func resolvePassword(account *AccountConfig, protocol string) string {
 		return ""
 	}
 
-	// Try OAuth2 transparent refresh first if it's configured
-	if protocol == "IMAP" && account.IMAP.AuthType == "oauth2" && account.OAuth2.ClientID != "" {
-		if token, err := GetToken(context.Background(), account.Name, &account.OAuth2); err == nil {
-			return token
-		}
-	}
-	if protocol == "SMTP" && account.SMTP.AuthType == "oauth2" && account.OAuth2.ClientID != "" {
-		if token, err := GetToken(context.Background(), account.Name, &account.OAuth2); err == nil {
-			return token
-		}
+	if token := resolveOAuth2Token(account, protocol); token != "" {
+		return token
 	}
 
-	// Try to resolve using PasswordCmd if defined
-	if protocol == "IMAP" && len(account.IMAP.PasswordCmd) > 0 {
-		if pwd := execPasswordCmd(account.IMAP.PasswordCmd); pwd != "" {
-			return pwd
-		}
-	}
-	if protocol == "SMTP" && len(account.SMTP.PasswordCmd) > 0 {
-		if pwd := execPasswordCmd(account.SMTP.PasswordCmd); pwd != "" {
-			return pwd
-		}
-	}
-	if len(account.PasswordCmd) > 0 {
-		if pwd := execPasswordCmd(account.PasswordCmd); pwd != "" {
+	for _, candidate := range passwordCommandsForProtocol(account, protocol) {
+		if pwd := execPasswordCmd(candidate); pwd != "" {
 			return pwd
 		}
 	}
@@ -433,25 +434,144 @@ func resolvePassword(account *AccountConfig, protocol string) string {
 		}
 	}
 
-	if name != "" && protocol != "" {
-		if password := os.Getenv("POSTERO_" + name + "_" + protocol + "_PASSWORD"); password != "" {
-			return password
-		}
-	}
-	if protocol != "" {
-		if password := os.Getenv("POSTERO_" + protocol + "_PASSWORD"); password != "" {
-			return password
-		}
-	}
-	if name != "" {
-		if password := os.Getenv("POSTERO_" + name + "_PASSWORD"); password != "" {
+	for _, key := range passwordEnvKeys(name, protocol) {
+		if password := os.Getenv(key); password != "" {
 			return password
 		}
 	}
 	return os.Getenv("POSTERO_PASSWORD")
 }
 
+func resolveOAuth2Token(account *AccountConfig, protocol string) string {
+	if account.OAuth2.ClientID == "" {
+		return ""
+	}
+
+	switch protocol {
+	case "IMAP":
+		if account.IMAP.AuthType != authTypeOAuth2 {
+			return ""
+		}
+	case "SMTP":
+		if account.SMTP.AuthType != authTypeOAuth2 {
+			return ""
+		}
+	default:
+		return ""
+	}
+
+	if token, err := GetToken(context.Background(), account.Name, &account.OAuth2); err == nil {
+		return token
+	}
+
+	return ""
+}
+
+func passwordCommandsForProtocol(account *AccountConfig, protocol string) [][]string {
+	commands := make([][]string, 0, 2)
+	switch protocol {
+	case "IMAP":
+		if len(account.IMAP.PasswordCmd) > 0 {
+			commands = append(commands, account.IMAP.PasswordCmd)
+		}
+	case "SMTP":
+		if len(account.SMTP.PasswordCmd) > 0 {
+			commands = append(commands, account.SMTP.PasswordCmd)
+		}
+	}
+	if len(account.PasswordCmd) > 0 {
+		commands = append(commands, account.PasswordCmd)
+	}
+	return commands
+}
+
+func passwordEnvKeys(name, protocol string) []string {
+	keys := make([]string, 0, 3)
+	if name != "" && protocol != "" {
+		keys = append(keys, "POSTERO_"+name+"_"+protocol+"_PASSWORD")
+	}
+	if protocol != "" {
+		keys = append(keys, "POSTERO_"+protocol+"_PASSWORD")
+	}
+	if name != "" {
+		keys = append(keys, "POSTERO_"+name+"_PASSWORD")
+	}
+	return keys
+}
+
 func normalizedAccountName(name string) string {
 	value := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
 	return strings.ReplaceAll(value, " ", "_")
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func providerPresetFor(provider string) (providerPreset, bool) {
+	switch provider {
+	case providerGmail:
+		return providerPreset{
+			imapHost:      "imap.gmail.com",
+			imapPort:      993,
+			imapTLS:       true,
+			smtpHost:      "smtp.gmail.com",
+			smtpPort:      587,
+			smtpTLS:       true,
+			oauthProvider: "google",
+			oauthScopes:   []string{"https://mail.google.com/"},
+			builtInOAuth2: true,
+		}, true
+	case providerOutlook:
+		return providerPreset{
+			imapHost:      "outlook.office365.com",
+			imapPort:      993,
+			imapTLS:       true,
+			smtpHost:      "smtp.office365.com",
+			smtpPort:      587,
+			smtpTLS:       true,
+			oauthProvider: "microsoft",
+			oauthScopes: []string{
+				"https://outlook.office.com/IMAP.AccessAsUser.All",
+				"https://outlook.office.com/SMTP.Send",
+				"offline_access",
+			},
+			tenantID:      "common",
+			builtInOAuth2: true,
+		}, true
+	case providerYahoo:
+		return providerPreset{
+			imapHost: "imap.mail.yahoo.com",
+			imapPort: 993,
+			imapTLS:  true,
+			smtpHost: "smtp.mail.yahoo.com",
+			smtpPort: 465,
+			smtpTLS:  true,
+		}, true
+	case providerICloud:
+		return providerPreset{
+			imapHost: "imap.mail.me.com",
+			imapPort: 993,
+			imapTLS:  true,
+			smtpHost: "smtp.mail.me.com",
+			smtpPort: 587,
+			smtpTLS:  true,
+		}, true
+	case providerFastmail:
+		return providerPreset{
+			imapHost: "imap.fastmail.com",
+			imapPort: 993,
+			imapTLS:  true,
+			smtpHost: "smtp.fastmail.com",
+			smtpPort: 465,
+			smtpTLS:  true,
+		}, true
+	default:
+		return providerPreset{}, false
+	}
 }

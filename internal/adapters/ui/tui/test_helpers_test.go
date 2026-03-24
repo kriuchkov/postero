@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -45,25 +46,25 @@ type updateDraftCall struct {
 	dto *models.UpdateMessageRequest
 }
 
-func (s *messageServiceStub) GetMessage(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *messageServiceStub) GetMessage(_ context.Context, id string) (*models.MessageDTO, error) {
 	for _, msg := range s.inbox {
 		if msg.ID == id {
 			return msg, nil
 		}
 	}
-	return nil, nil
+	return &models.MessageDTO{}, nil
 }
 
-func (s *messageServiceStub) ListMessages(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) ListMessages(_ context.Context, _, _ int) ([]*models.MessageDTO, error) {
 	return s.filterMessages(models.SearchCriteria{}), nil
 }
 
-func (s *messageServiceStub) SearchMessages(ctx context.Context, criteria models.SearchCriteria) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) SearchMessages(_ context.Context, criteria models.SearchCriteria) ([]*models.MessageDTO, error) {
 	s.lastSearch = criteria
 	return s.filterMessages(criteria), nil
 }
 
-func (s *messageServiceStub) ComposeMessage(ctx context.Context, createDTO *models.CreateMessageRequest) (*models.MessageDTO, error) {
+func (s *messageServiceStub) ComposeMessage(_ context.Context, createDTO *models.CreateMessageRequest) (*models.MessageDTO, error) {
 	if s.composeErr != nil {
 		return nil, s.composeErr
 	}
@@ -75,7 +76,7 @@ func (s *messageServiceStub) ComposeMessage(ctx context.Context, createDTO *mode
 	return &models.MessageDTO{ID: id, Subject: createDTO.Subject, To: createDTO.To, Body: createDTO.Body, IsDraft: true}, nil
 }
 
-func (s *messageServiceStub) SendMessage(ctx context.Context, id string) error {
+func (s *messageServiceStub) SendMessage(_ context.Context, id string) error {
 	if s.sendErr != nil {
 		return s.sendErr
 	}
@@ -83,7 +84,7 @@ func (s *messageServiceStub) SendMessage(ctx context.Context, id string) error {
 	return nil
 }
 
-func (s *messageServiceStub) DeleteMessage(ctx context.Context, id string) error {
+func (s *messageServiceStub) DeleteMessage(_ context.Context, id string) error {
 	if s.deleteErr != nil {
 		return s.deleteErr
 	}
@@ -97,60 +98,76 @@ func (s *messageServiceStub) DeleteMessage(ctx context.Context, id string) error
 	return nil
 }
 
-func (s *messageServiceStub) ReplyToMessage(ctx context.Context, messageID string, body string) (*models.MessageDTO, error) {
-	return nil, nil
+func (s *messageServiceStub) ReplyToMessage(_ context.Context, _ string, _ string) (*models.MessageDTO, error) {
+	return &models.MessageDTO{}, nil
 }
 
-func (s *messageServiceStub) ForwardMessage(ctx context.Context, messageID string, to []string) (*models.MessageDTO, error) {
-	return nil, nil
+func (s *messageServiceStub) ForwardMessage(_ context.Context, _ string, _ []string) (*models.MessageDTO, error) {
+	return &models.MessageDTO{}, nil
 }
 
-func (s *messageServiceStub) GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) GetAllInboxes(_ context.Context, _, _ int) ([]*models.MessageDTO, error) {
 	isDraft := false
 	isSpam := false
 	isDeleted := false
-	return s.filterMessages(models.SearchCriteria{IsDraft: &isDraft, IsSpam: &isSpam, IsDeleted: &isDeleted, Labels: []string{"inbox"}}), nil
+	return s.filterMessages(
+		models.SearchCriteria{IsDraft: &isDraft, IsSpam: &isSpam, IsDeleted: &isDeleted, Labels: []string{"inbox"}},
+	), nil
 }
 
-func (s *messageServiceStub) GetFlagged(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) GetFlagged(_ context.Context, _, _ int) ([]*models.MessageDTO, error) {
 	return s.filterMessages(models.SearchCriteria{}), nil
 }
 
-func (s *messageServiceStub) GetDrafts(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) GetDrafts(_ context.Context, _, _ int) ([]*models.MessageDTO, error) {
 	isDraft := true
 	isDeleted := false
 	return s.filterMessages(models.SearchCriteria{IsDraft: &isDraft, IsDeleted: &isDeleted}), nil
 }
 
-func (s *messageServiceStub) GetSent(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) GetSent(_ context.Context, _, _ int) ([]*models.MessageDTO, error) {
 	isDeleted := false
 	return s.filterMessages(models.SearchCriteria{Labels: []string{"sent"}, IsDeleted: &isDeleted}), nil
 }
 
-func (s *messageServiceStub) GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *messageServiceStub) GetByLabel(_ context.Context, label string, _, _ int) ([]*models.MessageDTO, error) {
 	s.lastLabelQuery = label
 	isDeleted := false
 	return s.filterMessages(models.SearchCriteria{Labels: []string{label}, IsDeleted: &isDeleted}), nil
 }
 
-func (s *messageServiceStub) ReplyAllToMessage(ctx context.Context, originalID string, body string) (*models.MessageDTO, error) {
-	return nil, nil
+func (s *messageServiceStub) ReplyAllToMessage(_ context.Context, _ string, _ string) (*models.MessageDTO, error) {
+	return &models.MessageDTO{}, nil
 }
 
-func (s *messageServiceStub) UpdateDraft(ctx context.Context, id string, updateDTO *models.UpdateMessageRequest) (*models.MessageDTO, error) {
+func (s *messageServiceStub) UpdateDraft(
+	_ context.Context,
+	id string,
+	updateDTO *models.UpdateMessageRequest,
+) (*models.MessageDTO, error) {
 	if s.updateDraftErr != nil {
 		return nil, s.updateDraftErr
 	}
 	s.updateDraftCalls = append(s.updateDraftCalls, updateDraftCall{id: id, dto: updateDTO})
 	s.updatedDraftCall = updateDTO
-	return &models.MessageDTO{ID: id, AccountID: derefString(updateDTO.AccountID), From: derefString(updateDTO.From), Subject: derefString(updateDTO.Subject), To: derefStrings(updateDTO.To), Cc: derefStrings(updateDTO.Cc), Bcc: derefStrings(updateDTO.Bcc), Body: derefString(updateDTO.Body), IsDraft: true}, nil
+	return &models.MessageDTO{
+		ID:        id,
+		AccountID: derefString(updateDTO.AccountID),
+		From:      derefString(updateDTO.From),
+		Subject:   derefString(updateDTO.Subject),
+		To:        derefStrings(updateDTO.To),
+		Cc:        derefStrings(updateDTO.Cc),
+		Bcc:       derefStrings(updateDTO.Bcc),
+		Body:      derefString(updateDTO.Body),
+		IsDraft:   true,
+	}, nil
 }
 
-func (s *messageServiceStub) ToggleStar(ctx context.Context, id string) (*models.MessageDTO, error) {
-	return nil, nil
+func (s *messageServiceStub) ToggleStar(_ context.Context, id string) (*models.MessageDTO, error) {
+	return &models.MessageDTO{ID: id}, nil
 }
 
-func (s *messageServiceStub) MarkAsRead(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *messageServiceStub) MarkAsRead(_ context.Context, id string) (*models.MessageDTO, error) {
 	if s.markReadErr != nil {
 		return nil, s.markReadErr
 	}
@@ -164,7 +181,7 @@ func (s *messageServiceStub) MarkAsRead(ctx context.Context, id string) (*models
 	return &models.MessageDTO{ID: id, IsRead: true}, nil
 }
 
-func (s *messageServiceStub) ToggleDelete(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *messageServiceStub) ToggleDelete(_ context.Context, id string) (*models.MessageDTO, error) {
 	if s.toggleDeleteErr != nil {
 		return nil, s.toggleDeleteErr
 	}
@@ -178,7 +195,7 @@ func (s *messageServiceStub) ToggleDelete(ctx context.Context, id string) (*mode
 	return &models.MessageDTO{ID: id, IsDeleted: true}, nil
 }
 
-func (s *messageServiceStub) ArchiveMessage(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *messageServiceStub) ArchiveMessage(_ context.Context, id string) (*models.MessageDTO, error) {
 	if s.archiveErr != nil {
 		return nil, s.archiveErr
 	}
@@ -196,7 +213,7 @@ func (s *messageServiceStub) ArchiveMessage(ctx context.Context, id string) (*mo
 	return &models.MessageDTO{ID: id, Labels: []string{"archive"}}, nil
 }
 
-func (s *messageServiceStub) MarkAsSpam(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *messageServiceStub) MarkAsSpam(_ context.Context, id string) (*models.MessageDTO, error) {
 	if s.spamErr != nil {
 		return nil, s.spamErr
 	}
@@ -214,9 +231,9 @@ func (s *messageServiceStub) MarkAsSpam(ctx context.Context, id string) (*models
 	return &models.MessageDTO{ID: id, IsSpam: true}, nil
 }
 
-func (s *messageServiceStub) RestoreMessage(ctx context.Context, snapshot *models.MessageDTO) (*models.MessageDTO, error) {
+func (s *messageServiceStub) RestoreMessage(_ context.Context, snapshot *models.MessageDTO) (*models.MessageDTO, error) {
 	if snapshot == nil {
-		return nil, nil
+		return nil, errors.New("snapshot is nil")
 	}
 	for index, msg := range s.inbox {
 		if msg != nil && msg.ID == snapshot.ID {
@@ -229,8 +246,8 @@ func (s *messageServiceStub) RestoreMessage(ctx context.Context, snapshot *model
 	return cloneMessageDTO(snapshot), nil
 }
 
-func (s *messageServiceStub) AddLabel(ctx context.Context, id, label string) (*models.MessageDTO, error) {
-	return nil, nil
+func (s *messageServiceStub) AddLabel(_ context.Context, id, label string) (*models.MessageDTO, error) {
+	return &models.MessageDTO{ID: id, Labels: []string{label}}, nil
 }
 
 func testModel() Model {
@@ -253,9 +270,10 @@ func testModelWithService(service *messageServiceStub) Model {
 		accountEmails: map[string]string{"personal": "me@example.com"},
 		defaultFrom:   "me@example.com",
 		defaultAcctID: "personal",
+		commandActive: false,
 		searchInput: func() textinput.Model {
 			input := textinput.New()
-			input.Prompt = "Search: "
+			input.Prompt = "/ "
 			input.Placeholder = "subject, sender, body"
 			return input
 		}(),
@@ -270,48 +288,148 @@ func testModelWithService(service *messageServiceStub) Model {
 		}(),
 	}
 	m.accountEmails["work"] = "work@example.com"
+	m.applySearchInputStyles(false)
 	return m
 }
 
 func sampleMessages() []*models.MessageDTO {
 	return []*models.MessageDTO{
-		{ID: "msg-1", AccountID: "personal", ThreadID: "thread-1", Subject: "Subject 1", From: "sender1@example.com", To: []string{"me@example.com"}, Cc: []string{"copy@example.com"}, Body: "Body 1", Labels: []string{"inbox"}, Date: time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)},
-		{ID: "msg-2", AccountID: "personal", ThreadID: "thread-2", Subject: "Subject 2", From: "sender2@example.com", To: []string{"me@example.com"}, Body: "Body 2", Labels: []string{"inbox"}, Date: time.Date(2026, 3, 19, 12, 0, 0, 0, time.UTC)},
+		{
+			ID:        "msg-1",
+			AccountID: "personal",
+			ThreadID:  "thread-1",
+			Subject:   "Subject 1",
+			From:      "sender1@example.com",
+			To:        []string{"me@example.com"},
+			Cc:        []string{"copy@example.com"},
+			Body:      "Body 1",
+			Labels:    []string{"inbox"},
+			Date:      time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			ID:        "msg-2",
+			AccountID: "personal",
+			ThreadID:  "thread-2",
+			Subject:   "Subject 2",
+			From:      "sender2@example.com",
+			To:        []string{"me@example.com"},
+			Body:      "Body 2",
+			Labels:    []string{"inbox"},
+			Date:      time.Date(2026, 3, 19, 12, 0, 0, 0, time.UTC),
+		},
 	}
 }
 
 func sampleAccountMessages() []*models.MessageDTO {
 	return []*models.MessageDTO{
-		{ID: "outlook-1", AccountID: "Outlook", ThreadID: "thread-o1", Subject: "Outlook inbox", From: "outlook@example.com", To: []string{"me@example.com"}, Body: "Outlook body", Labels: []string{"inbox"}, Date: time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC)},
-		{ID: "gmail-1", AccountID: "Gmail", ThreadID: "thread-g1", Subject: "Gmail inbox", From: "gmail@example.com", To: []string{"me@example.com"}, Body: "Gmail body", Labels: []string{"inbox"}, Date: time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC)},
-		{ID: "gmail-2", AccountID: "Gmail", ThreadID: "thread-g2", Subject: "Gmail sent", From: "me@gmail.com", To: []string{"you@example.com"}, Body: "Sent body", Labels: []string{"sent"}, Date: time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC)},
-		{ID: "gmail-3", AccountID: "Gmail", ThreadID: "thread-g3", Subject: "Gmail spam", From: "spam@example.com", To: []string{"me@example.com"}, Body: "Spam body", Labels: []string{"spam"}, IsSpam: true, Date: time.Date(2026, 3, 20, 9, 0, 0, 0, time.UTC)},
+		{
+			ID:        "outlook-1",
+			AccountID: "Outlook",
+			ThreadID:  "thread-o1",
+			Subject:   "Outlook inbox",
+			From:      "outlook@example.com",
+			To:        []string{"me@example.com"},
+			Body:      "Outlook body",
+			Labels:    []string{"inbox"},
+			Date:      time.Date(2026, 3, 20, 12, 0, 0, 0, time.UTC),
+		},
+		{
+			ID:        "gmail-1",
+			AccountID: "Gmail",
+			ThreadID:  "thread-g1",
+			Subject:   "Gmail inbox",
+			From:      "gmail@example.com",
+			To:        []string{"me@example.com"},
+			Body:      "Gmail body",
+			Labels:    []string{"inbox"},
+			Date:      time.Date(2026, 3, 20, 11, 0, 0, 0, time.UTC),
+		},
+		{
+			ID:        "gmail-2",
+			AccountID: "Gmail",
+			ThreadID:  "thread-g2",
+			Subject:   "Gmail sent",
+			From:      "me@gmail.com",
+			To:        []string{"you@example.com"},
+			Body:      "Sent body",
+			Labels:    []string{"sent"},
+			Date:      time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
+		},
+		{
+			ID:        "gmail-3",
+			AccountID: "Gmail",
+			ThreadID:  "thread-g3",
+			Subject:   "Gmail spam",
+			From:      "spam@example.com",
+			To:        []string{"me@example.com"},
+			Body:      "Spam body",
+			Labels:    []string{"spam"},
+			IsSpam:    true,
+			Date:      time.Date(2026, 3, 20, 9, 0, 0, 0, time.UTC),
+		},
 	}
 }
 
 func sampleDraftMessages() []*models.MessageDTO {
 	return []*models.MessageDTO{
-		{ID: "draft-1", AccountID: "personal", ThreadID: "thread-d1", Subject: "Draft subject", From: "me@example.com", To: []string{"user@example.com"}, Body: "Draft body", IsDraft: true, Date: time.Date(2026, 3, 20, 13, 0, 0, 0, time.UTC)},
+		{
+			ID:        "draft-1",
+			AccountID: "personal",
+			ThreadID:  "thread-d1",
+			Subject:   "Draft subject",
+			From:      "me@example.com",
+			To:        []string{"user@example.com"},
+			Body:      "Draft body",
+			IsDraft:   true,
+			Date:      time.Date(2026, 3, 20, 13, 0, 0, 0, time.UTC),
+		},
 	}
 }
 
 func sampleSentMessages() []*models.MessageDTO {
 	return []*models.MessageDTO{
-		{ID: "sent-1", AccountID: "personal", ThreadID: "thread-s1", Subject: "Sent subject", From: "me@example.com", To: []string{"user@example.com"}, Body: "Sent body", Labels: []string{"sent"}, IsRead: true, Date: time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC)},
+		{
+			ID:        "sent-1",
+			AccountID: "personal",
+			ThreadID:  "thread-s1",
+			Subject:   "Sent subject",
+			From:      "me@example.com",
+			To:        []string{"user@example.com"},
+			Body:      "Sent body",
+			Labels:    []string{"sent"},
+			IsRead:    true,
+			Date:      time.Date(2026, 3, 20, 14, 0, 0, 0, time.UTC),
+		},
 	}
 }
 
 func sampleSpamMessages() []*models.MessageDTO {
 	return []*models.MessageDTO{
-		{ID: "spam-1", AccountID: "personal", ThreadID: "thread-x1", Subject: "Spam subject", From: "spam@example.com", To: []string{"me@example.com"}, Body: "Spam body", Labels: []string{"spam"}, IsSpam: true, Date: time.Date(2026, 3, 20, 15, 0, 0, 0, time.UTC)},
+		{
+			ID:        "spam-1",
+			AccountID: "personal",
+			ThreadID:  "thread-x1",
+			Subject:   "Spam subject",
+			From:      "spam@example.com",
+			To:        []string{"me@example.com"},
+			Body:      "Spam body",
+			Labels:    []string{"spam"},
+			IsSpam:    true,
+			Date:      time.Date(2026, 3, 20, 15, 0, 0, 0, time.UTC),
+		},
 	}
 }
 
 func manyDraftMessages(count int) []*models.MessageDTO {
 	result := make([]*models.MessageDTO, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		result = append(result, &models.MessageDTO{
-			ID:        "draft-bulk-" + time.Date(2026, 3, 20, 13, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Minute).Format("150405") + "-" + string(rune('a'+(i%26))),
+			ID: "draft-bulk-" + time.Date(2026, 3, 20, 13, 0, 0, 0, time.UTC).
+				Add(time.Duration(i)*time.Minute).
+				Format("150405") +
+				"-" + string(
+				rune('a'+(i%26)),
+			),
 			AccountID: "personal",
 			ThreadID:  "thread-bulk",
 			Subject:   "Draft subject",
@@ -328,7 +446,13 @@ func manyDraftMessages(count int) []*models.MessageDTO {
 func sampleLongMessage() []*models.MessageDTO {
 	bodyLines := make([]string, 0, 40)
 	for i := 1; i <= 40; i++ {
-		bodyLines = append(bodyLines, "Line "+time.Date(2026, 3, 20, 13, 0, 0, 0, time.UTC).Add(time.Duration(i)*time.Minute).Format("15:04")+" of a long message body")
+		bodyLines = append(
+			bodyLines,
+			"Line "+time.Date(2026, 3, 20, 13, 0, 0, 0, time.UTC).
+				Add(time.Duration(i)*time.Minute).
+				Format("15:04")+
+				" of a long message body",
+		)
 	}
 	return []*models.MessageDTO{{
 		ID:        "long-1",

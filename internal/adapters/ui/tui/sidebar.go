@@ -9,7 +9,7 @@ import (
 
 func renderSidebar(m Model, width, height int) string {
 	style := m.styles.Sidebar.Width(width).Height(height)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
+	titleStyle := paneTitleStyle(m, stateSidebar)
 	sectionStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Bold(true).MarginTop(1)
 	itemStyle := sidebarItemStyle(m, false, false)
 	selectedStyle := sidebarItemStyle(m, true, false)
@@ -41,7 +41,7 @@ func renderSidebar(m Model, width, height int) string {
 			label = "  " + label
 		}
 
-		rendered := itemStyle.Render(label)
+		var rendered string
 		if m.sidebarCursor == i {
 			rendered = selectedStyle.Render(label)
 		} else if strings.HasPrefix(item, "  ") && strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(m.activeAccountID)) {

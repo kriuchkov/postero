@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
 )
@@ -156,15 +157,15 @@ func (m *MockRepository) loadTestData() {
 }
 
 // GetByID retrieves a message by its ID
-func (m *MockRepository) GetByID(ctx context.Context, id string) (*models.Message, error) {
+func (m *MockRepository) GetByID(_ context.Context, id string) (*models.Message, error) {
 	if msg, exists := m.messages[id]; exists {
 		return msg, nil
 	}
-	return nil, nil
+	return nil, coreerrors.MessageNotFound(id)
 }
 
 // List retrieves messages with optional filtering
-func (m *MockRepository) List(ctx context.Context, limit, offset int) ([]*models.Message, error) {
+func (m *MockRepository) List(_ context.Context, limit, offset int) ([]*models.Message, error) {
 	var messages []*models.Message
 	for _, msg := range m.messages {
 		messages = append(messages, msg)
@@ -183,7 +184,7 @@ func (m *MockRepository) List(ctx context.Context, limit, offset int) ([]*models
 }
 
 // Search searches messages based on criteria
-func (m *MockRepository) Search(ctx context.Context, criteria models.SearchCriteria) ([]*models.Message, error) {
+func (m *MockRepository) Search(_ context.Context, criteria models.SearchCriteria) ([]*models.Message, error) {
 	var results []*models.Message
 
 	for _, msg := range m.messages {
@@ -217,7 +218,7 @@ func contains(haystack, needle string) bool {
 func indexOf(s, substr string) int {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		match := true
-		for j := 0; j < len(substr); j++ {
+		for j := range len(substr) {
 			if s[i+j] != substr[j] {
 				match = false
 				break
@@ -231,7 +232,7 @@ func indexOf(s, substr string) int {
 }
 
 // Save persists a message
-func (m *MockRepository) Save(ctx context.Context, message *models.Message) error {
+func (m *MockRepository) Save(_ context.Context, message *models.Message) error {
 	if message.ID == "" {
 		message.ID = "msg-" + time.Now().Format("20060102150405")
 	}
@@ -240,13 +241,13 @@ func (m *MockRepository) Save(ctx context.Context, message *models.Message) erro
 }
 
 // Delete removes a message
-func (m *MockRepository) Delete(ctx context.Context, id string) error {
+func (m *MockRepository) Delete(_ context.Context, id string) error {
 	delete(m.messages, id)
 	return nil
 }
 
 // MarkAsRead marks a message as read
-func (m *MockRepository) MarkAsRead(ctx context.Context, id string) error {
+func (m *MockRepository) MarkAsRead(_ context.Context, id string) error {
 	if msg, exists := m.messages[id]; exists {
 		msg.IsRead = true
 		msg.Flags.Seen = true
@@ -255,7 +256,7 @@ func (m *MockRepository) MarkAsRead(ctx context.Context, id string) error {
 }
 
 // MarkAsSpam marks a message as spam
-func (m *MockRepository) MarkAsSpam(ctx context.Context, id string) error {
+func (m *MockRepository) MarkAsSpam(_ context.Context, id string) error {
 	if msg, exists := m.messages[id]; exists {
 		msg.IsSpam = true
 		msg.Flags.Junk = true

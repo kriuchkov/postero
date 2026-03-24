@@ -13,7 +13,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "Print a mailbox snapshot",
 	Long:  `Print a mailbox snapshot to standard output without starting the interactive TUI.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		service, _, err := appcore.NewMessageService()
 		if err != nil {
 			return err
@@ -44,11 +44,4 @@ var listCmd = &cobra.Command{
 
 		return nil
 	},
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

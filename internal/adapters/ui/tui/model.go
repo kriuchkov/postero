@@ -12,13 +12,14 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	appcore "github.com/kriuchkov/postero/internal/app"
 	"github.com/kriuchkov/postero/internal/config"
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
 )
 
-// SessionState defines the active pane
+// SessionState defines the active pane.
 type SessionState int
 
 const (
@@ -146,6 +147,7 @@ func parseBindingKeys(raw string, fallback []string) []string {
 	return keys
 }
 
+//nolint:recvcheck // Bubble Tea models intentionally mix value and pointer receivers.
 type Model struct {
 	config           *config.Config
 	state            SessionState
@@ -172,6 +174,10 @@ type Model struct {
 	composeHint      string
 	composeEditing   bool
 	searchInput      textinput.Model
+	commandActive    bool
+	commandDraft     string
+	commandHistory   []string
+	commandHistoryIx int
 	searchActive     bool
 	searchQuery      string
 	pendingUndo      *undoState
@@ -211,7 +217,9 @@ func initialModel() Model {
 			}
 		}
 
-		msgService, _, err = appcore.NewMessageService()
+		if service, _, serviceErr := appcore.NewMessageService(); serviceErr == nil {
+			msgService = service
+		}
 	}
 
 	if msgService == nil {
@@ -226,31 +234,35 @@ func initialModel() Model {
 	}
 
 	return Model{
-		config:          cfg,
-		state:           stateSidebar, // Start at sidebar
-		keys:            bindings,
-		help:            help.New(),
-		styles:          styles,
-		sidebarItems:    items,
-		sidebarCursor:   0,
-		service:         msgService,
-		allMessages:     []*models.MessageDTO{},
-		messages:        []*models.MessageDTO{},
-		listCursor:      0,
-		activeDraft:     nil,
-		accountNames:    accountNames,
-		accountEmails:   accountEmails,
-		defaultFrom:     defaultFrom,
-		defaultAcctID:   defaultAcctID,
-		activeAccountID: "",
-		statusMessage:   "",
-		statusError:     false,
-		composeTitle:    "",
-		composeHint:     "",
-		composeEditing:  false,
+		config:           cfg,
+		state:            stateSidebar, // Start at sidebar
+		keys:             bindings,
+		help:             help.New(),
+		styles:           styles,
+		sidebarItems:     items,
+		sidebarCursor:    0,
+		service:          msgService,
+		allMessages:      []*models.MessageDTO{},
+		messages:         []*models.MessageDTO{},
+		listCursor:       0,
+		activeDraft:      nil,
+		accountNames:     accountNames,
+		accountEmails:    accountEmails,
+		defaultFrom:      defaultFrom,
+		defaultAcctID:    defaultAcctID,
+		activeAccountID:  "",
+		statusMessage:    "",
+		statusError:      false,
+		composeTitle:     "",
+		composeHint:      "",
+		composeEditing:   false,
+		commandActive:    false,
+		commandDraft:     "",
+		commandHistory:   nil,
+		commandHistoryIx: -1,
 		searchInput: func() textinput.Model {
 			input := textinput.New()
-			input.Prompt = "Search: "
+			input.Prompt = "/ "
 			input.Placeholder = "subject, sender, body"
 			return input
 		}(),
@@ -277,6 +289,23 @@ func (m Model) Init() tea.Cmd {
 
 func keyMatches(msg tea.KeyMsg, k key.Binding) bool {
 	return key.Matches(msg, k)
+}
+
+func (m *Model) applySearchInputStyles(commandMode bool) {
+	if commandMode {
+		m.searchInput.PromptStyle = lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Primary).Padding(0, 1)
+		m.searchInput.TextStyle = lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight)
+		m.searchInput.PlaceholderStyle = lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+		return
+	}
+
+	m.searchInput.PromptStyle = lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Primary)
+	m.searchInput.TextStyle = lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
+	m.searchInput.PlaceholderStyle = lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+}
+
+func commandPromptCandidates() []string {
+	return []string{"compose", "inbox", "drafts", "refresh", "quit"}
 }
 
 type messagesLoadedMsg struct {

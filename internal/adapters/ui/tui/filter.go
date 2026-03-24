@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"context"
 	"os/exec"
 	"strings"
 
@@ -59,7 +60,7 @@ func applyFilterCmd(command string, input string) (string, error) {
 		return "", err
 	}
 
-	cmd := exec.Command(binary, parts[1:]...) //nolint:gosec // Filter command is explicitly configured by the local user.
+	cmd := exec.CommandContext(context.Background(), binary, parts[1:]...)
 	cmd.Stdin = strings.NewReader(input)
 
 	var out bytes.Buffer

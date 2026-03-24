@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func renderHeader(m Model, width, height int) string {
+func renderHeader(m Model, width int) string {
 	style := m.styles.Header.Width(width)
 	appTitleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight)
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
@@ -15,37 +15,10 @@ func renderHeader(m Model, width, height int) string {
 	primaryPillStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Primary).Padding(0, 1)
 	mutedPillStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Background(m.styles.Palette.Secondary).Padding(0, 1)
 	searchStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+	searchBadgeStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text).Background(m.styles.Palette.Faint).Padding(0, 1)
 
 	if m.state == stateCompose {
-		composeTitle := "New Message"
-		if m.activeDraft != nil && m.activeDraft.ID != "" {
-			composeTitle = "Edit Draft"
-		}
-		left := lipgloss.JoinVertical(
-			lipgloss.Left,
-			appTitleStyle.Render("Postero"),
-			titleStyle.Render(composeTitle+"  •  "+m.composeAccountLabel()),
-		)
-		escLabel := "Esc Cancel"
-		modeLabel := "i Insert"
-		if m.composeEditing {
-			escLabel = "Esc Normal"
-			if m.focusIndex == 3 {
-				modeLabel = "Enter New Line"
-			} else {
-				modeLabel = "Enter Next Field"
-			}
-		}
-		right := lipgloss.JoinHorizontal(
-			lipgloss.Left,
-			mutedPillStyle.Render(escLabel),
-			lipgloss.NewStyle().MarginLeft(1).Render(mutedPillStyle.Render("Ctrl+O Save")),
-			lipgloss.NewStyle().MarginLeft(1).Render(primaryPillStyle.Render("Ctrl+X Send")),
-			lipgloss.NewStyle().MarginLeft(1).Render(mutedPillStyle.Render(modeLabel)),
-			lipgloss.NewStyle().MarginLeft(1).Render(mutedPillStyle.Render("j/k Fields")),
-			lipgloss.NewStyle().MarginLeft(1).Render(mutedPillStyle.Render("h/l Account")),
-		)
-		return style.Render(joinHeaderColumns(width, left, right))
+		return style.Render(renderComposeHeader(m, width, appTitleStyle, titleStyle))
 	}
 
 	hasSelection := len(m.messages) > 0 && m.listCursor >= 0 && m.listCursor < len(m.messages)
@@ -65,11 +38,22 @@ func renderHeader(m Model, width, height int) string {
 		)
 	}
 	if strings.TrimSpace(m.searchQuery) != "" || m.searchActive {
-		searchLabel := "Filter: " + searchDisplayValue(m)
+		searchLabel := searchDisplayValue(m)
 		if m.searchActive {
-			searchLabel += "  •  typing"
+			searchLabel += "  •  live filter"
+		} else {
+			searchLabel += "  •  filtered"
 		}
-		left = lipgloss.JoinVertical(lipgloss.Left, left, searchStyle.Render(searchLabel))
+		left = lipgloss.JoinVertical(
+			lipgloss.Left,
+			left,
+			lipgloss.JoinHorizontal(
+				lipgloss.Left,
+				searchBadgeStyle.Render("/ "+searchDisplayValue(m)),
+				" ",
+				searchStyle.Render(searchLabel),
+			),
+		)
 	}
 
 	actions := []string{primaryPillStyle.Render("c Compose")}
@@ -78,6 +62,11 @@ func renderHeader(m Model, width, height int) string {
 		searchPill = pillStyle.Render("/ Search")
 	}
 	actions = append(actions, searchPill)
+	commandPill := mutedPillStyle.Render(": Cmd")
+	if m.commandActive {
+		commandPill = pillStyle.Render(": Cmd")
+	}
+	actions = append(actions, commandPill)
 	if m.pendingUndo != nil {
 		actions = append(actions, pillStyle.Render("u Undo"))
 	}
@@ -96,11 +85,211 @@ func renderHeader(m Model, width, height int) string {
 	}
 	right := lipgloss.JoinHorizontal(lipgloss.Left, actions...)
 	placed := joinHeaderColumns(width, left, right)
-
-	if height > 0 {
-		style = style.Height(height)
-	}
 	return style.Render(placed)
+}
+
+func renderComposeHeader(m Model, width int, appTitleStyle, titleStyle lipgloss.Style) string {
+	composeTitle := "New Message"
+	if m.activeDraft != nil && m.activeDraft.ID != "" {
+		composeTitle = "Edit Draft"
+	}
+	left := lipgloss.JoinVertical(
+		lipgloss.Left,
+		appTitleStyle.Render("Postero"),
+		titleStyle.Render(composeTitle+"  •  "+m.composeAccountLabel()),
+	)
+	right := lipgloss.JoinHorizontal(lipgloss.Left, composeHeaderActions(m, width)...)
+	return joinHeaderColumns(width, left, right)
+}
+
+type composeHeaderContext struct {
+	emphasizeMode    bool
+	showAccount      bool
+	emphasizeAccount bool
+	showBody         bool
+	emphasizeBody    bool
+}
+
+type composeHeaderActionTone int
+
+const (
+	composeActionNeutral composeHeaderActionTone = iota
+	composeActionCalm
+	composeActionAccent
+	composeActionSecondary
+)
+
+type composeHeaderActionSpec struct {
+	key       string
+	action    string
+	tone      composeHeaderActionTone
+	emphasize bool
+}
+
+func currentComposeHeaderContext(m Model) composeHeaderContext {
+	if m.composeEditing {
+		return composeHeaderContext{emphasizeMode: true}
+	}
+
+	context := composeHeaderContext{
+		showBody: true,
+	}
+
+	switch m.focusIndex {
+	case 0:
+		context.showAccount = true
+		context.emphasizeAccount = true
+	case 3:
+		context.emphasizeBody = true
+	default:
+		context.emphasizeMode = true
+	}
+
+	return context
+}
+
+func composeHeaderActions(m Model, width int) []string {
+	neutralKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text).Background(m.styles.Palette.Faint).Padding(0, 1)
+	neutralLabelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+	calmKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Secondary).Padding(0, 1)
+	calmLabelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
+	accentKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Primary).Padding(0, 1)
+	accentLabelStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight)
+	secondaryKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Secondary).Padding(0, 1)
+	secondaryLabelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+	focusedSecondaryKeyStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Primary).Padding(0, 1)
+	focusedSecondaryLabelStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
+
+	actions := make([]string, 0, 6)
+	for _, spec := range composeHeaderActionSpecs(m, width) {
+		keyStyle := secondaryKeyStyle
+		labelStyle := secondaryLabelStyle
+		switch spec.tone {
+		case composeActionNeutral:
+			keyStyle = neutralKeyStyle
+			labelStyle = neutralLabelStyle
+		case composeActionCalm:
+			keyStyle = calmKeyStyle
+			labelStyle = calmLabelStyle
+		case composeActionAccent:
+			keyStyle = accentKeyStyle
+			labelStyle = accentLabelStyle
+		case composeActionSecondary:
+			if spec.emphasize {
+				keyStyle = focusedSecondaryKeyStyle
+				labelStyle = focusedSecondaryLabelStyle
+			}
+		}
+		actions = append(actions, lipgloss.NewStyle().MarginLeft(1).Render(composeHeaderHint(spec.key, spec.action, keyStyle, labelStyle)))
+	}
+
+	if len(actions) > 0 {
+		actions[0] = strings.TrimLeft(actions[0], " ")
+	}
+	return actions
+}
+
+func composeHeaderActionSpecs(m Model, width int) []composeHeaderActionSpec {
+	context := currentComposeHeaderContext(m)
+
+	saveKey := "CTRL+O"
+	sendKey := "CTRL+X"
+	if width < 84 {
+		saveKey = "^O"
+		sendKey = "^X"
+	}
+
+	actions := []composeHeaderActionSpec{
+		{key: "ESC", action: composeEscAction(m), tone: composeActionNeutral},
+		{key: saveKey, action: "save", tone: composeActionCalm},
+		{key: sendKey, action: "send", tone: composeActionAccent},
+	}
+
+	modeKey := composeHeaderModeKey(m)
+	modeAction := composeHeaderModeAction(m)
+	if modeKey != "" && modeAction != "" {
+		actions = append(actions, composeHeaderActionSpec{key: modeKey, action: modeAction, tone: composeActionSecondary, emphasize: context.emphasizeMode})
+	}
+
+	if width >= 110 {
+		actions = append(actions, composeWideHeaderActionSpecs(m, context)...)
+		return actions
+	}
+
+	if width >= 96 {
+		if spec, ok := composeCompactHeaderActionSpec(m, context); ok {
+			actions = append(actions, spec)
+		}
+		return actions
+	}
+
+	return actions
+}
+
+func composeWideHeaderActionSpecs(m Model, context composeHeaderContext) []composeHeaderActionSpec {
+	actions := make([]composeHeaderActionSpec, 0, 3)
+	if !m.composeEditing {
+		actions = append(actions, composeHeaderActionSpec{key: "J/K", action: "move", tone: composeActionSecondary})
+	}
+
+	if context.showAccount {
+		actions = append(actions, composeHeaderActionSpec{key: "H/L", action: "acct", tone: composeActionSecondary, emphasize: context.emphasizeAccount})
+	}
+
+	if context.showBody {
+		actions = append(actions, composeHeaderActionSpec{key: "O/O", action: "body", tone: composeActionSecondary, emphasize: context.emphasizeBody})
+	}
+
+	return actions
+}
+
+func composeCompactHeaderActionSpec(m Model, context composeHeaderContext) (composeHeaderActionSpec, bool) {
+	if m.composeEditing {
+		return composeHeaderActionSpec{}, false
+	}
+	if context.showAccount {
+		return composeHeaderActionSpec{key: "H/L", action: "acct", tone: composeActionSecondary, emphasize: true}, true
+	}
+	if context.emphasizeBody {
+		return composeHeaderActionSpec{key: "O/O", action: "body", tone: composeActionSecondary, emphasize: true}, true
+	}
+	return composeHeaderActionSpec{key: "J/K", action: "move", tone: composeActionSecondary}, true
+}
+
+func composeHeaderHint(keyLabel, actionLabel string, keyStyle, labelStyle lipgloss.Style) string {
+	return lipgloss.JoinHorizontal(
+		lipgloss.Left,
+		keyStyle.Render(keyLabel),
+		" ",
+		labelStyle.Render(actionLabel),
+	)
+}
+
+func composeEscAction(m Model) string {
+	if m.composeEditing {
+		return "normal"
+	}
+	return "back"
+}
+
+func composeHeaderModeKey(m Model) string {
+	if !m.composeEditing {
+		return "I"
+	}
+	if m.focusIndex < 1 {
+		return ""
+	}
+	return "ENTER"
+}
+
+func composeHeaderModeAction(m Model) string {
+	if !m.composeEditing {
+		return "edit"
+	}
+	if m.focusIndex == 3 {
+		return "nl"
+	}
+	return "next"
 }
 
 func currentMailboxTitle(m Model) string {
@@ -159,10 +348,7 @@ func joinHeaderColumns(width int, left, right string) string {
 	availableWidth := width - 2
 	leftWidth := lipgloss.Width(left)
 	rightWidth := lipgloss.Width(right)
-	gap := availableWidth - leftWidth - rightWidth
-	if gap < 2 {
-		gap = 2
-	}
+	gap := max(availableWidth-leftWidth-rightWidth, 2)
 	spacer := lipgloss.NewStyle().Width(gap).Render("")
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, spacer, right)
 }

@@ -55,13 +55,13 @@ func (r *Repository) IsConnected() bool {
 
 func (r *Repository) Send(ctx context.Context, message *models.Message) error {
 	if !r.connected {
-		return fmt.Errorf("smtp repository is not connected")
+		return errors.New("smtp repository is not connected")
 	}
 	if strings.TrimSpace(r.host) == "" || r.port == 0 {
-		return fmt.Errorf("smtp host or port is not configured")
+		return errors.New("smtp host or port is not configured")
 	}
 	if message == nil {
-		return fmt.Errorf("message is nil")
+		return errors.New("message is nil")
 	}
 
 	from := strings.TrimSpace(message.From)
@@ -69,12 +69,12 @@ func (r *Repository) Send(ctx context.Context, message *models.Message) error {
 		from = strings.TrimSpace(r.username)
 	}
 	if from == "" {
-		return fmt.Errorf("message sender is empty")
+		return errors.New("message sender is empty")
 	}
 
 	recipients := collectRecipients(message)
 	if len(recipients) == 0 {
-		return fmt.Errorf("message has no recipients")
+		return errors.New("message has no recipients")
 	}
 
 	payload, err := buildMessagePayload(from, message)
@@ -96,7 +96,11 @@ func (r *Repository) Send(ctx context.Context, message *models.Message) error {
 
 func (r *Repository) sendDirectTLS(from string, recipients []string, payload []byte) error {
 	address := net.JoinHostPort(r.host, strconv.Itoa(r.port))
-	conn, err := tls.Dial("tcp", address, &tls.Config{ServerName: r.host, MinVersion: tls.VersionTLS12})
+	conn, err := (&tls.Dialer{Config: &tls.Config{ServerName: r.host, MinVersion: tls.VersionTLS12}}).DialContext(
+		context.Background(),
+		"tcp",
+		address,
+	)
 	if err != nil {
 		return errors.Wrap(err, "dial smtp tls")
 	}
@@ -170,12 +174,12 @@ type xoauth2Auth struct {
 	token    string
 }
 
-func (a *xoauth2Auth) Start(server *smtp.ServerInfo) (string, []byte, error) {
-	resp := []byte(fmt.Sprintf("user=%s\x01auth=Bearer %s\x01\x01", a.username, a.token))
+func (a *xoauth2Auth) Start(_ *smtp.ServerInfo) (string, []byte, error) {
+	resp := fmt.Appendf(nil, "user=%s\x01auth=Bearer %s\x01\x01", a.username, a.token)
 	return "XOAUTH2", resp, nil
 }
 
-func (a *xoauth2Auth) Next(fromServer []byte, more bool) ([]byte, error) {
+func (a *xoauth2Auth) Next(_ []byte, more bool) ([]byte, error) {
 	if more {
 		// We shouldn't need a second step for XOAUTH2 on success, but if failure, server may send error JSON.
 		return []byte{}, nil

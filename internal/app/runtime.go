@@ -64,7 +64,7 @@ func NewMessageService() (ports.MessageService, *config.Config, error) {
 	return message.NewServiceWithSMTP(repo, smtpFactory(cfg)), cfg, nil
 }
 
-func DefaultSender(cfg *config.Config) (accountID string, from string) {
+func DefaultSender(cfg *config.Config) (string, string) {
 	account, ok := ResolveAccount(cfg, "")
 	if !ok {
 		return "", ""

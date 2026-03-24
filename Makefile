@@ -10,7 +10,22 @@ test:
 	docker run -t --rm -v $$(pwd):/app -w /app \
 	-v $$(go env GOCACHE):/.cache/go-build -e GOCACHE=/.cache/go-build \
 	-v $$(go env GOMODCACHE):/.cache/mod -e GOMODCACHE=/.cache/mod \
-	--entrypoint "" golang:1.24.11-alpine sh -c "go test -v -count=1 -p 4 -coverprofile=coverage.out ./... && go tool cover -func=coverage.out && go tool cover -html=coverage.out -o coverage.html"
+	--entrypoint "" golang:1.24.11-alpine sh -c "go test -v -short -count=1 -p 4 -coverprofile=coverage.out ./... && go tool cover -func=coverage.out && go tool cover -html=coverage.out -o coverage.html"
+
+integration-test:
+	go test -v ./tests/integration/...
+
+mail-smoke-test: build
+	@echo "Starting GreenMail for smoke test..."
+	docker compose -f docker-compose.mailtest.yml up -d
+	@echo "Waiting for GreenMail to start..."
+	sleep 5
+	@echo "Running tests against local greenmail..."
+	POSTERO_CONFIG_DIR="$$(pwd)/.tmp/mailtest-config" ./bin/pstr config validate
+	POSTERO_CONFIG_DIR="$$(pwd)/.tmp/mailtest-config" ./bin/pstr compose -s "Makefile Smoke" --send
+	POSTERO_CONFIG_DIR="$$(pwd)/.tmp/mailtest-config" ./bin/pstr sync --account local
+	@echo "Smoke tests passed. Tearing down..."
+	docker compose -f docker-compose.mailtest.yml down
 
 build:
 	go build -o bin/pstr ./cmd/pstr

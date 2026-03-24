@@ -23,6 +23,22 @@ type Styles struct {
 	Footer  lipgloss.Style
 }
 
+func paneTitleStyle(m Model, pane SessionState) lipgloss.Style {
+	style := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
+	if m.state == pane {
+		style = style.Foreground(m.styles.Palette.Highlight)
+	}
+	return style
+}
+
+func paneSubtitleStyle(m Model, pane SessionState) lipgloss.Style {
+	style := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+	if m.state == pane {
+		style = style.Foreground(m.styles.Palette.Text)
+	}
+	return style
+}
+
 func DefaultStyles() Styles {
 	return StylesFromTheme(config.ThemeConfig{})
 }

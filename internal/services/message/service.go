@@ -94,7 +94,7 @@ func (s *Service) SendMessage(ctx context.Context, id string) error {
 			return err
 		}
 		if smtpRepo != nil {
-			defer smtpRepo.Disconnect(ctx) //nolint:errcheck
+			defer smtpRepo.Disconnect(ctx) //nolint:errcheck // best-effort disconnect after send.
 			if err := smtpRepo.Send(ctx, msg); err != nil {
 				return err
 			}

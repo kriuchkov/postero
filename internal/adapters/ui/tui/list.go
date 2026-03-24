@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -9,10 +10,20 @@ import (
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
+const listItemHeight = 5
+
+type listCursorMode int
+
+const (
+	listCursorNone listCursorMode = iota
+	listCursorPassive
+	listCursorActive
+)
+
 func renderList(m Model, width, height int) string {
 	style := m.styles.List.Width(width).Height(height)
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
-	subtitleStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).MarginBottom(1)
+	headerStyle := paneTitleStyle(m, stateList)
+	subtitleStyle := paneSubtitleStyle(m, stateList).MarginBottom(1)
 	emptyStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
 	trackStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Secondary)
 	thumbStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Faint)
@@ -21,10 +32,7 @@ func renderList(m Model, width, height int) string {
 		return style.Render("")
 	}
 
-	innerWidth := width - 4
-	if innerWidth < 12 {
-		innerWidth = 12
-	}
+	innerWidth := max(width-4, 12)
 
 	listHeader := lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -78,11 +86,7 @@ func renderList(m Model, width, height int) string {
 		scrollIndicatorWidth = 0
 	}
 
-	itemHeight := 5
-	itemsPerPage := availableItemsHeight / itemHeight
-	if itemsPerPage < 1 {
-		itemsPerPage = 1
-	}
+	itemsPerPage := max(availableItemsHeight/listItemHeight, 1)
 
 	// Determining the visible window based on cursor
 	start := 0
@@ -91,10 +95,7 @@ func renderList(m Model, width, height int) string {
 		// Simple scrolling:
 		start = m.listCursor - itemsPerPage + 1
 	}
-	end := start + itemsPerPage
-	if end > len(m.messages) {
-		end = len(m.messages)
-	}
+	end := min(start+itemsPerPage, len(m.messages))
 	if start > end {
 		start = end
 	}
@@ -102,7 +103,9 @@ func renderList(m Model, width, height int) string {
 	var renderedItems []string
 	for i := start; i < end; i++ {
 		msg := m.messages[i]
-		isSelected := m.state == stateList && i == m.listCursor
+		cursorMode := currentListCursorMode(m, i)
+		isSelected := cursorMode == listCursorActive
+		isCursor := cursorMode != listCursorNone
 
 		cardStyle := lipgloss.NewStyle().
 			Width(contentWidth).
@@ -112,7 +115,10 @@ func renderList(m Model, width, height int) string {
 			BorderForeground(m.styles.Palette.Faint)
 		if isSelected {
 			cardStyle = cardStyle.Background(m.styles.Palette.Faint).BorderForeground(m.styles.Palette.Primary)
+		} else if cursorMode == listCursorPassive {
+			cardStyle = cardStyle.BorderForeground(m.styles.Palette.Secondary)
 		}
+		cardInnerWidth := max(contentWidth-cardStyle.GetHorizontalFrameSize(), 1)
 
 		sender := msg.From
 		if idx := strings.Index(sender, "<"); idx > 0 {
@@ -132,9 +138,12 @@ func renderList(m Model, width, height int) string {
 		if isSelected {
 			dateStyle = dateStyle.Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Faint)
 			senderStyle = senderStyle.Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Faint)
+		} else if isCursor {
+			dateStyle = dateStyle.Foreground(m.styles.Palette.Text)
+			senderStyle = senderStyle.Foreground(m.styles.Palette.Text)
 		}
 
-		senderMaxWidth := contentWidth - len(dateStr) - 5
+		senderMaxWidth := cardInnerWidth - lipgloss.Width(dateStr) - 1
 		if senderMaxWidth < 0 {
 			senderMaxWidth = 5
 		}
@@ -144,10 +153,7 @@ func renderList(m Model, width, height int) string {
 		}
 
 		// Fill space between sender and date
-		gap := contentWidth - lipgloss.Width(sender) - lipgloss.Width(dateStr) - 4
-		if gap < 1 {
-			gap = 1
-		}
+		gap := max(cardInnerWidth-lipgloss.Width(sender)-lipgloss.Width(dateStr), 1)
 
 		spacerStyle := lipgloss.NewStyle()
 		if isSelected {
@@ -161,39 +167,43 @@ func renderList(m Model, width, height int) string {
 		if subject == "" {
 			subject = "(No Subject)"
 		}
-		if len(subject) > contentWidth-4 {
-			subject = subject[:contentWidth-5] + "…"
+		if lipgloss.Width(subject) > cardInnerWidth {
+			subject = truncateText(subject, cardInnerWidth)
 		}
 		subjectStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight)
 		if isSelected {
 			subjectStyle = subjectStyle.Background(m.styles.Palette.Faint).Foreground(m.styles.Palette.Highlight)
+		} else if isCursor {
+			subjectStyle = subjectStyle.Foreground(m.styles.Palette.Text)
 		}
 		row2 := subjectStyle.Render(subject)
 
 		preview := strings.ReplaceAll(msg.Body, "\n", " ")
-		if len(preview) > contentWidth-4 {
-			preview = preview[:contentWidth-5] + "…"
+		if lipgloss.Width(preview) > cardInnerWidth {
+			preview = truncateText(preview, cardInnerWidth)
 		}
 		previewStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
 		if isSelected {
 			previewStyle = previewStyle.Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Faint)
+		} else if isCursor {
+			previewStyle = previewStyle.Foreground(m.styles.Palette.Text)
 		}
 		row3 := previewStyle.Render(preview)
 
 		chips := renderMessageChips(msg, isSelected)
-		rowWidth := contentWidth - 2
-		if rowWidth < 1 {
-			rowWidth = contentWidth
-		}
-		rowStyle := lipgloss.NewStyle().Width(rowWidth)
+		rowStyle := lipgloss.NewStyle().Width(cardInnerWidth).MaxWidth(cardInnerWidth)
 		if isSelected {
 			rowStyle = rowStyle.Background(m.styles.Palette.Faint)
 		}
 		row1 = rowStyle.Render(row1)
 		row2 = rowStyle.Render(row2)
-		chips = rowStyle.Render(chips)
 		row3 = rowStyle.Render(row3)
-		block := lipgloss.JoinVertical(lipgloss.Left, row1, row2, chips, row3)
+		rows := []string{row1, row2}
+		if chips != "" {
+			rows = append(rows, rowStyle.Render(chips))
+		}
+		rows = append(rows, row3)
+		block := lipgloss.JoinVertical(lipgloss.Left, rows...)
 		renderedItems = append(renderedItems, cardStyle.Render(block))
 	}
 
@@ -207,6 +217,82 @@ func renderList(m Model, width, height int) string {
 	return style.Render(body)
 }
 
+func currentListCursorMode(m Model, index int) listCursorMode {
+	if index != m.listCursor {
+		return listCursorNone
+	}
+	if m.state == stateList {
+		return listCursorActive
+	}
+	return listCursorPassive
+}
+
+func truncateText(value string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	runes := []rune(value)
+	if width == 1 {
+		return "…"
+	}
+	for len(runes) > 0 {
+		candidate := string(runes) + "…"
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+		runes = runes[:len(runes)-1]
+	}
+	return "…"
+}
+
+func listWindowRange(m Model, height int) (int, int) {
+	if len(m.messages) == 0 {
+		return 0, 0
+	}
+	if height < 1 {
+		return 0, len(m.messages)
+	}
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
+	subtitleStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).MarginBottom(1)
+	listHeader := lipgloss.JoinVertical(
+		lipgloss.Left,
+		headerStyle.Render(currentMailboxTitle(m)),
+		subtitleStyle.Render(mailboxSubtitle(m)),
+	)
+	if m.searchActive {
+		listHeader = lipgloss.JoinVertical(
+			lipgloss.Left,
+			listHeader,
+			lipgloss.NewStyle().Foreground(m.styles.Palette.Text).Render(m.searchInput.View()),
+		)
+	} else if strings.TrimSpace(m.searchQuery) != "" {
+		listHeader = lipgloss.JoinVertical(
+			lipgloss.Left,
+			listHeader,
+			lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Render("Filter: "+m.searchQuery),
+		)
+	}
+	availableItemsHeight := height - lipgloss.Height(listHeader)
+	if availableItemsHeight < 1 {
+		return 0, min(1, len(m.messages))
+	}
+
+	itemsPerPage := max(availableItemsHeight/listItemHeight, 1)
+	start := 0
+	if m.listCursor >= itemsPerPage {
+		start = m.listCursor - itemsPerPage + 1
+	}
+	end := min(start+itemsPerPage, len(m.messages))
+	if start > end {
+		start = end
+	}
+	return start, end
+}
+
 func renderListScrollIndicator(height, total, visible, start int, trackStyle, thumbStyle lipgloss.Style) string {
 	if height <= 0 {
 		return ""
@@ -215,13 +301,7 @@ func renderListScrollIndicator(height, total, visible, start int, trackStyle, th
 		return lipgloss.NewStyle().Width(1).Height(height).Render("")
 	}
 
-	thumbHeight := int(float64(visible) / float64(total) * float64(height))
-	if thumbHeight < 1 {
-		thumbHeight = 1
-	}
-	if thumbHeight > height {
-		thumbHeight = height
-	}
+	thumbHeight := min(max(int(float64(visible)/float64(total)*float64(height)), 1), height)
 	maxThumbTop := height - thumbHeight
 	thumbTop := 0
 	if total > visible && maxThumbTop > 0 {
@@ -229,7 +309,7 @@ func renderListScrollIndicator(height, total, visible, start int, trackStyle, th
 	}
 
 	lines := make([]string, 0, height)
-	for i := 0; i < height; i++ {
+	for i := range height {
 		if i >= thumbTop && i < thumbTop+thumbHeight {
 			lines = append(lines, thumbStyle.Render("▎"))
 			continue
@@ -253,11 +333,8 @@ func renderMessageChips(msg *models.MessageDTO, selected bool) string {
 	if msg.IsSpam {
 		chips = append(chips, spamChipStyle(selected).Render("Spam"))
 	}
-	for _, label := range msg.Labels {
-		if label == "archive" {
-			chips = append(chips, archiveChipStyle(selected).Render("Archive"))
-			break
-		}
+	if slices.Contains(msg.Labels, "archive") {
+		chips = append(chips, archiveChipStyle(selected).Render("Archive"))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, chips...)
 }
@@ -271,7 +348,7 @@ func baseChipStyle(selected bool) lipgloss.Style {
 }
 
 func unreadChipStyle(selected bool) lipgloss.Style {
-	style := baseChipStyle(selected).Copy().Foreground(lipgloss.Color("39"))
+	style := baseChipStyle(selected).Foreground(lipgloss.Color("39"))
 	if selected {
 		style = style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("33"))
 	}
@@ -281,13 +358,13 @@ func unreadChipStyle(selected bool) lipgloss.Style {
 func draftChipStyle(selected bool) lipgloss.Style {
 	style := baseChipStyle(selected)
 	if selected {
-		style = style.Copy().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("241"))
+		style = style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("241"))
 	}
 	return style
 }
 
 func spamChipStyle(selected bool) lipgloss.Style {
-	style := baseChipStyle(selected).Copy().Foreground(lipgloss.Color("203"))
+	style := baseChipStyle(selected).Foreground(lipgloss.Color("203"))
 	if selected {
 		style = style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("160"))
 	}
@@ -297,7 +374,7 @@ func spamChipStyle(selected bool) lipgloss.Style {
 func archiveChipStyle(selected bool) lipgloss.Style {
 	style := baseChipStyle(selected)
 	if selected {
-		style = style.Copy().Foreground(lipgloss.Color("255")).Background(lipgloss.Color("24"))
+		style = style.Foreground(lipgloss.Color("255")).Background(lipgloss.Color("24"))
 	}
 	return style
 }

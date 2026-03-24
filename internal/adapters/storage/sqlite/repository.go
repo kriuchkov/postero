@@ -12,7 +12,7 @@ import (
 	"github.com/go-faster/errors"
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // required for database/sql SQLite driver registration.
 )
 
 type Repository struct {
@@ -20,7 +20,13 @@ type Repository struct {
 }
 
 func NewRepository(dbPath string) (ports.MessageRepository, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	dsn := dbPath
+	if !strings.Contains(dsn, "?") {
+		dsn += "?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000"
+	} else {
+		dsn += "&_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000"
+	}
+	db, err := sql.Open("sqlite3", dsn)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to open database")
 	}
@@ -69,13 +75,13 @@ func (r *Repository) initSchema() error {
 		flags_junk BOOLEAN
 	);
 	`
-	_, err := r.db.Exec(query)
+	_, err := r.db.ExecContext(context.Background(), query)
 	return err
 }
 
 func (r *Repository) seedTestData() error {
 	var count int
-	if err := r.db.QueryRow("SELECT COUNT(*) FROM messages").Scan(&count); err != nil {
+	if err := r.db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM messages").Scan(&count); err != nil {
 		return err
 	}
 	if count > 0 {
@@ -234,6 +240,9 @@ func (r *Repository) List(ctx context.Context, limit, offset int) ([]*models.Mes
 		}
 		messages = append(messages, msg)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return messages, nil
 }
 
@@ -245,7 +254,7 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 		FROM messages
 		WHERE 1=1
 	`
-	var args []interface{}
+	var args []any
 
 	if criteria.Subject != "" {
 		query += " AND subject LIKE ?"
@@ -300,10 +309,12 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 
 	// Handle Labels (Naive JSON string match for now)
 	// Stored as ["label1","label2"].
+	var querySb303 strings.Builder
 	for _, label := range criteria.Labels {
-		query += " AND labels LIKE ?"
+		querySb303.WriteString(" AND labels LIKE ?")
 		args = append(args, "%\""+label+"\"%")
 	}
+	query += querySb303.String()
 
 	query += " ORDER BY date DESC"
 
@@ -329,6 +340,9 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 			return nil, err
 		}
 		messages = append(messages, msg)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return messages, nil
 }
@@ -382,10 +396,32 @@ func (r *Repository) Save(ctx context.Context, msg *models.Message) error {
 	// Sync flags before save
 	msg.Flags.Deleted = msg.IsDeleted
 
-	_, err := r.db.ExecContext(ctx, query,
-		msg.ID, msg.AccountID, msg.Subject, msg.From, string(toAddrs), string(ccAddrs), string(bccAddrs), msg.Body, msg.HTML, msg.Date, string(labels), msg.ThreadID,
-		msg.IsRead, msg.IsSpam, msg.IsDraft, msg.IsStarred, msg.Size,
-		msg.Flags.Seen, msg.Flags.Answered, msg.Flags.Flagged, msg.Flags.Draft, msg.Flags.Deleted, msg.Flags.Junk,
+	_, err := r.db.ExecContext(
+		ctx,
+		query,
+		msg.ID,
+		msg.AccountID,
+		msg.Subject,
+		msg.From,
+		string(toAddrs),
+		string(ccAddrs),
+		string(bccAddrs),
+		msg.Body,
+		msg.HTML,
+		msg.Date,
+		string(labels),
+		msg.ThreadID,
+		msg.IsRead,
+		msg.IsSpam,
+		msg.IsDraft,
+		msg.IsStarred,
+		msg.Size,
+		msg.Flags.Seen,
+		msg.Flags.Answered,
+		msg.Flags.Flagged,
+		msg.Flags.Draft,
+		msg.Flags.Deleted,
+		msg.Flags.Junk,
 	)
 	return err
 }
@@ -409,26 +445,46 @@ func (r *Repository) MarkAsSpam(ctx context.Context, id string) error {
 }
 
 type scanner interface {
-	Scan(dest ...interface{}) error
+	Scan(dest ...any) error
 }
 
 func (r *Repository) scanMessage(row scanner) (*models.Message, error) {
 	var msg models.Message
-	var toAddrs, ccAddrs, bccAddrs, labels string
+	var toAddrs, ccAddrs, bccAddrs, labels []byte
 
 	err := row.Scan(
-		&msg.ID, &msg.AccountID, &msg.Subject, &msg.From, &toAddrs, &ccAddrs, &bccAddrs, &msg.Body, &msg.HTML, &msg.Date, &labels, &msg.ThreadID,
-		&msg.IsRead, &msg.IsSpam, &msg.IsDraft, &msg.IsStarred, &msg.Size,
-		&msg.Flags.Seen, &msg.Flags.Answered, &msg.Flags.Flagged, &msg.Flags.Draft, &msg.Flags.Deleted, &msg.Flags.Junk,
+		&msg.ID,
+		&msg.AccountID,
+		&msg.Subject,
+		&msg.From,
+		&toAddrs,
+		&ccAddrs,
+		&bccAddrs,
+		&msg.Body,
+		&msg.HTML,
+		&msg.Date,
+		&labels,
+		&msg.ThreadID,
+		&msg.IsRead,
+		&msg.IsSpam,
+		&msg.IsDraft,
+		&msg.IsStarred,
+		&msg.Size,
+		&msg.Flags.Seen,
+		&msg.Flags.Answered,
+		&msg.Flags.Flagged,
+		&msg.Flags.Draft,
+		&msg.Flags.Deleted,
+		&msg.Flags.Junk,
 	)
 	if err != nil {
 		return nil, err
 	}
 
-	_ = json.Unmarshal([]byte(toAddrs), &msg.To)
-	_ = json.Unmarshal([]byte(ccAddrs), &msg.Cc)
-	_ = json.Unmarshal([]byte(bccAddrs), &msg.Bcc)
-	_ = json.Unmarshal([]byte(labels), &msg.Labels)
+	_ = json.Unmarshal(toAddrs, &msg.To)
+	_ = json.Unmarshal(ccAddrs, &msg.Cc)
+	_ = json.Unmarshal(bccAddrs, &msg.Bcc)
+	_ = json.Unmarshal(labels, &msg.Labels)
 
 	// Sync generic fields with flags
 	msg.IsDeleted = msg.Flags.Deleted

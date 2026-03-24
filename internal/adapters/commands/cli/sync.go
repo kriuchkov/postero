@@ -20,7 +20,7 @@ var syncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Synchronize emails with IMAP server",
 	Long:  `Fetch and synchronize emails from configured IMAP accounts.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		ctx := context.Background()
 		store, cfg, err := appcore.NewMessageRepository()
 		if err != nil {
@@ -63,7 +63,7 @@ func syncAccount(ctx context.Context, store ports.MessageRepository, account con
 	if err := repo.Connect(ctx, account.IMAP.Host, account.IMAP.Port, username, password, account.IMAP.AuthType, account.IMAP.TLS); err != nil {
 		return 0, errors.Wrapf(err, "connect imap for %s", account.Name)
 	}
-	defer repo.Disconnect(ctx) //nolint:errcheck
+	defer repo.Disconnect(ctx) //nolint:errcheck // best-effort cleanup after sync.
 
 	messages, err := repo.Fetch(ctx, "INBOX", 50)
 	if err != nil {
@@ -94,7 +94,7 @@ func syncMockMessages(ctx context.Context, store ports.MessageRepository) error 
 	if err := repo.Connect(ctx, "imap.gmail.com", 993, "user", "pass", "plain", true); err != nil {
 		return errors.Wrap(err, "failed to connect mock imap")
 	}
-	defer repo.Disconnect(ctx) //nolint:errcheck
+	defer repo.Disconnect(ctx) //nolint:errcheck // best-effort cleanup for mock sync.
 
 	messages, err := repo.Fetch(ctx, "INBOX", 50)
 	if err != nil {

@@ -77,7 +77,7 @@ var configInitCmd = &cobra.Command{
 var configValidateCmd = &cobra.Command{
 	Use:   "validate",
 	Short: "Validate the current config file",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, err := appcore.LoadConfig()
 		if err != nil {
 			return err

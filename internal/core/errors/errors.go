@@ -12,6 +12,15 @@ type DomainError struct {
 	Err     error
 }
 
+// NewDomainError creates a new domain error
+func NewDomainError(code, message string, err error) DomainError {
+	return DomainError{
+		Code:    code,
+		Message: message,
+		Err:     err,
+	}
+}
+
 func (e DomainError) Error() string {
 	if e.Err != nil {
 		return e.Message + ": " + e.Err.Error()
@@ -45,18 +54,13 @@ func AccountNotFound(account string) error {
 }
 
 func PasswordNotConfigured(account string) error {
-	return NewDomainError("password_not_configured", fmt.Sprintf("account %s password is not configured", account), ErrPasswordNotConfigured)
+	return NewDomainError(
+		"password_not_configured",
+		fmt.Sprintf("account %s password is not configured", account),
+		ErrPasswordNotConfigured,
+	)
 }
 
 func SnapshotNil() error {
 	return NewDomainError("snapshot_nil", "snapshot is nil", ErrSnapshotNil)
-}
-
-// NewDomainError creates a new domain error
-func NewDomainError(code, message string, err error) DomainError {
-	return DomainError{
-		Code:    code,
-		Message: message,
-		Err:     err,
-	}
 }

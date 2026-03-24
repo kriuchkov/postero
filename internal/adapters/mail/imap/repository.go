@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,16 +38,18 @@ type xoauth2Client struct {
 	token    string
 }
 
-func (a *xoauth2Client) Start() (mech string, ir []byte, err error) {
+func (a *xoauth2Client) Start() (string, []byte, error) {
 	str := fmt.Sprintf("user=%s\x01auth=Bearer %s\x01\x01", a.username, a.token)
 	return "XOAUTH2", []byte(str), nil
 }
 
-func (a *xoauth2Client) Next(challenge []byte) ([]byte, error) {
+func (a *xoauth2Client) Next(_ []byte) ([]byte, error) {
 	return nil, nil
 }
 
 // Connect establishes a connection to the IMAP server
+//
+//nolint:nestif // auth flow is clearer as a linear branch on transport and auth type.
 func (r *Repository) Connect(ctx context.Context, host string, port int, username, password string, authType string, useTLS bool) error {
 	_ = ctx
 	address := net.JoinHostPort(host, strconv.Itoa(port))
@@ -115,16 +118,21 @@ func (r *Repository) Fetch(ctx context.Context, mailbox string, limit int) ([]*m
 	from := uint32(1)
 	to := mbox.Messages
 	fetchCount := limitOrAll(limit, int(to))
-	if fetchCount > 0 && fetchCount < int(to) {
-		fetchCountU64 := uint64(fetchCount)
-		from = to - uint32(fetchCountU64) + 1
+	if fetchCountU32, ok := intToUint32(fetchCount); ok && fetchCountU32 > 0 && fetchCountU32 < to {
+		from = to - fetchCountU32 + 1
 	}
 
 	seqset := new(goimap.SeqSet)
 	seqset.AddRange(from, to)
 
 	section := &goimap.BodySectionName{}
-	items := []goimap.FetchItem{goimap.FetchEnvelope, goimap.FetchFlags, goimap.FetchInternalDate, goimap.FetchRFC822Size, section.FetchItem()}
+	items := []goimap.FetchItem{
+		goimap.FetchEnvelope,
+		goimap.FetchFlags,
+		goimap.FetchInternalDate,
+		goimap.FetchRFC822Size,
+		section.FetchItem(),
+	}
 	messagesCh := make(chan *goimap.Message, min(limitOrAll(limit, int(to-from+1)), 64))
 	errCh := make(chan error, 1)
 
@@ -161,7 +169,7 @@ func (r *Repository) IsConnected() bool {
 
 func toModelMessage(message *goimap.Message, section *goimap.BodySectionName) (*models.Message, error) {
 	if message == nil || message.Envelope == nil {
-		return nil, fmt.Errorf("imap message envelope is empty")
+		return nil, errors.New("imap message envelope is empty")
 	}
 
 	body := ""
@@ -213,8 +221,11 @@ func readMessageBody(reader io.Reader) (string, string, []*models.Attachment, er
 	mr, err := imail.CreateReader(reader)
 	if err != nil {
 		// Fallback to raw readout
-		data, _ := io.ReadAll(reader)
-		return string(data), "", nil, nil
+		data, readErr := io.ReadAll(reader)
+		if readErr != nil {
+			return "", "", nil, errors.Wrap(readErr, "read raw message body")
+		}
+		return string(data), "", nil, errors.Wrap(err, "parse message body")
 	}
 
 	var plainBody, htmlBody string
@@ -266,6 +277,13 @@ func readMessageBody(reader io.Reader) (string, string, []*models.Attachment, er
 	return plainBody, htmlBody, attachments, nil
 }
 
+func intToUint32(value int) (uint32, bool) {
+	if value < 0 || value > math.MaxUint32 {
+		return 0, false
+	}
+	return uint32(value), true
+}
+
 func formatAddresses(addresses []*goimap.Address) string {
 	converted := convertAddresses(addresses)
 	if len(converted) == 0 {
@@ -302,12 +320,7 @@ func envelopeMessageID(envelope *goimap.Envelope, seqNum uint32) string {
 }
 
 func hasFlag(flags []string, flag string) bool {
-	for _, candidate := range flags {
-		if candidate == flag {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(flags, flag)
 }
 
 func limitOrAll(limit, total int) int {
@@ -318,11 +331,4 @@ func limitOrAll(limit, total int) int {
 		return total
 	}
 	return limit
-}
-
-func min(left, right int) int {
-	if left < right {
-		return left
-	}
-	return right
 }

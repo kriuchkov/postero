@@ -101,34 +101,7 @@ func ValidateConfig(cfg *Config) []ValidationIssue {
 		}
 
 		if usesOAuth2(&account) {
-			provider := account.OAuth2.Provider
-			if provider == "" {
-				provider = account.Provider
-			}
-			if !SupportsBuiltInOAuth2(provider) {
-				issues = append(issues, ValidationIssue{
-					Severity: "error",
-					Path:     prefix + ".oauth2.provider",
-					Message:  fmt.Sprintf("built-in OAuth2 is not supported for provider %q", provider),
-					Hint:     "Use gmail/google or outlook/microsoft, or switch the account to app-password/password_cmd auth.",
-				})
-			}
-			if strings.TrimSpace(account.OAuth2.ClientID) == "" {
-				issues = append(issues, ValidationIssue{
-					Severity: "error",
-					Path:     prefix + ".oauth2.client_id",
-					Message:  "OAuth2 client_id is missing",
-					Hint:     "Create an OAuth app for the provider and set client_id.",
-				})
-			}
-			if strings.TrimSpace(account.OAuth2.ClientSecret) == "" {
-				issues = append(issues, ValidationIssue{
-					Severity: "error",
-					Path:     prefix + ".oauth2.client_secret",
-					Message:  "OAuth2 client_secret is missing",
-					Hint:     "Create an OAuth app for the provider and set client_secret.",
-				})
-			}
+			issues = append(issues, validateOAuthAccount(account, prefix)...)
 		} else if !hasConfigSecret(account) {
 			issues = append(issues, ValidationIssue{
 				Severity: "warning",
@@ -139,6 +112,39 @@ func ValidateConfig(cfg *Config) []ValidationIssue {
 		}
 	}
 
+	return issues
+}
+
+func validateOAuthAccount(account AccountConfig, prefix string) []ValidationIssue {
+	issues := make([]ValidationIssue, 0, 3)
+	provider := account.OAuth2.Provider
+	if provider == "" {
+		provider = account.Provider
+	}
+	if !SupportsBuiltInOAuth2(provider) {
+		issues = append(issues, ValidationIssue{
+			Severity: "error",
+			Path:     prefix + ".oauth2.provider",
+			Message:  fmt.Sprintf("built-in OAuth2 is not supported for provider %q", provider),
+			Hint:     "Use gmail/google or outlook/microsoft, or switch the account to app-password/password_cmd auth.",
+		})
+	}
+	if strings.TrimSpace(account.OAuth2.ClientID) == "" {
+		issues = append(issues, ValidationIssue{
+			Severity: "error",
+			Path:     prefix + ".oauth2.client_id",
+			Message:  "OAuth2 client_id is missing",
+			Hint:     "Create an OAuth app for the provider and set client_id.",
+		})
+	}
+	if strings.TrimSpace(account.OAuth2.ClientSecret) == "" {
+		issues = append(issues, ValidationIssue{
+			Severity: "error",
+			Path:     prefix + ".oauth2.client_secret",
+			Message:  "OAuth2 client_secret is missing",
+			Hint:     "Create an OAuth app for the provider and set client_secret.",
+		})
+	}
 	return issues
 }
 

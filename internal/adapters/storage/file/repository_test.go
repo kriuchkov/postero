@@ -13,7 +13,7 @@ import (
 
 func TestNewRepository(t *testing.T) {
 	repo, err := NewRepository(t.TempDir())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, repo)
 }
 
@@ -92,5 +92,5 @@ func TestRepositoryMutationsAndDelete(t *testing.T) {
 
 	require.NoError(t, repo.Delete(ctx, message.ID))
 	_, err = repo.GetByID(ctx, message.ID)
-	assert.ErrorIs(t, err, coreerrors.ErrMessageNotFound)
+	require.ErrorIs(t, err, coreerrors.ErrMessageNotFound)
 }

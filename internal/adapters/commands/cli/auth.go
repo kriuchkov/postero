@@ -36,11 +36,11 @@ var authSetCmd = &cobra.Command{
 	Use:   "set [account_name]",
 	Short: "Save a password for an account",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		account := args[0]
 
 		fmt.Printf("Enter password for account '%s': ", account)
-		bytePassword, err := term.ReadPassword(int(syscall.Stdin))
+		bytePassword, err := term.ReadPassword(syscall.Stdin)
 		fmt.Println()
 		if err != nil {
 			return errors.Wrap(err, "failed to read password")
@@ -65,7 +65,7 @@ var authDelCmd = &cobra.Command{
 	Use:   "delete [account_name]",
 	Short: "Delete a saved password for an account",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		account := args[0]
 
 		err := keyring.Delete("postero", account)
@@ -89,7 +89,7 @@ var authLoginCmd = &cobra.Command{
 	Use:   "login [account_name]",
 	Short: "Perform interactive login (for OAuth2)",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		accountName := args[0]
 		cfg, err := appcore.LoadConfig()
 		if err != nil {
@@ -113,7 +113,7 @@ var authAddCmd = &cobra.Command{
 	Use:   "add [provider]",
 	Short: "Create or update an account config entry",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		provider := config.NormalizeProviderName(args[0])
 		if provider == "" {
 			return errors.Errorf("unsupported provider %q", args[0])
@@ -167,7 +167,12 @@ var authAddCmd = &cobra.Command{
 	},
 }
 
-func ensureOAuthAccountConfig(cfg *config.Config, accountName string, existing config.AccountConfig, exists bool) (config.AccountConfig, error) {
+func ensureOAuthAccountConfig(
+	cfg *config.Config,
+	accountName string,
+	existing config.AccountConfig,
+	exists bool,
+) (config.AccountConfig, error) {
 	provider := config.NormalizeProviderName(firstNonEmpty(authBootstrapProvider, existing.Provider, existing.OAuth2.Provider, accountName))
 	if provider == "" {
 		return config.AccountConfig{}, errors.Errorf(
@@ -279,10 +284,12 @@ func init() {
 	authAddCmd.Flags().BoolVar(&authAddLogin, "login", false, "start the OAuth2 login flow immediately after saving the account")
 
 	authLoginCmd.Flags().StringVar(&authBootstrapProvider, "provider", "", "provider preset to use when bootstrapping a missing account")
-	authLoginCmd.Flags().StringVar(&authBootstrapEmail, "email", "", "account email address to save when bootstrapping a missing OAuth2 account")
+	authLoginCmd.Flags().
+		StringVar(&authBootstrapEmail, "email", "", "account email address to save when bootstrapping a missing OAuth2 account")
 	authLoginCmd.Flags().StringVar(&authBootstrapName, "name", "", "account name to save when bootstrapping a missing OAuth2 account")
 	authLoginCmd.Flags().StringVar(&authBootstrapClientID, "client-id", "", "OAuth2 client ID to save when bootstrapping a missing account")
-	authLoginCmd.Flags().StringVar(&authBootstrapClientSecret, "client-secret", "", "OAuth2 client secret to save when bootstrapping a missing account")
+	authLoginCmd.Flags().
+		StringVar(&authBootstrapClientSecret, "client-secret", "", "OAuth2 client secret to save when bootstrapping a missing account")
 	authLoginCmd.Flags().StringVar(&authBootstrapTenantID, "tenant-id", "", "OAuth2 tenant ID for Microsoft accounts")
 
 	authCmd.AddCommand(authSetCmd)

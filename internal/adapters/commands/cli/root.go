@@ -12,7 +12,7 @@ var rootCmd = &cobra.Command{
 	Long: `Postero (pstr) is a modern open-source terminal email client designed for productivity.
 Built from the ground up for developers, engineers, and command-line aficionados.`,
 	Version: "1.0.0",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		return tui.Run()
 	},
 }

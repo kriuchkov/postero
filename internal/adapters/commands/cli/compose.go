@@ -26,7 +26,7 @@ var composeCmd = &cobra.Command{
 	Use:   "compose",
 	Short: "Compose a new email",
 	Long:  `Create and compose a new email message.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, _ []string) error {
 		service, cfg, err := appcore.NewMessageService()
 		if err != nil {
 			return err

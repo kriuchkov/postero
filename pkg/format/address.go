@@ -24,6 +24,7 @@ func AddressForHumans(address *mail.Address) string {
 	return fmt.Sprintf("%s <%s>", address.Name, address.Address)
 }
 
+//nolint:revive // exported helper keeps package API explicit.
 func FormatAddresses(addresses []*mail.Address) string {
 	formatted := make([]string, 0, len(addresses))
 	for _, address := range addresses {

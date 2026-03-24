@@ -10,110 +10,16 @@ import (
 func renderContent(m Model, width, height int) string {
 	style := m.styles.Content.Width(width).Height(height)
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight)
-	subtitleStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
 
 	if m.state == stateCompose {
-		if m.activeDraft == nil {
-			return style.Render("Loading draft...")
-		}
-
-		labelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Width(8).Align(lipgloss.Right).MarginRight(1)
-		accountStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
-		accountHintStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
-		contextTitleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
-		contextHintStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
-		modeStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
-		contextCardStyle := lipgloss.NewStyle().
-			Border(lipgloss.NormalBorder(), false, false, false, true).
-			BorderForeground(m.styles.Palette.Secondary).
-			PaddingLeft(1).
-			MarginBottom(1)
-
-		accountValue := m.composeAccountLabel()
-		accountView := accountStyle.Render(accountValue)
-		if m.focusIndex == 0 {
-			accountView = lipgloss.NewStyle().Foreground(m.styles.Palette.Primary).Bold(true).Render(accountValue)
-			accountView = lipgloss.JoinHorizontal(lipgloss.Left, accountView, accountHintStyle.Render("  h/l or ↑/↓ switch"))
-		}
-
-		toView := m.toInput.View()
-		subjectView := m.subjectInput.View()
-
-		if m.focusIndex == 1 {
-			toView = lipgloss.NewStyle().Foreground(m.styles.Palette.Primary).Render(toView)
-		}
-		if m.focusIndex == 2 {
-			subjectView = lipgloss.NewStyle().Foreground(m.styles.Palette.Primary).Render(subjectView)
-		}
-
-		title := strings.TrimSpace(m.composeTitle)
-		if title == "" {
-			title = "Composer"
-		}
-		hint := strings.TrimSpace(m.composeHint)
-		if hint == "" {
-			hint = "Write now, save when ready."
-		}
-		modeHint := "Navigation mode. Press Enter or i to edit the selected field."
-		if m.composeEditing {
-			modeHint = "Writing mode. Press Esc to leave editing without closing the draft."
-		}
-
-		header := lipgloss.JoinVertical(
-			lipgloss.Left,
-			titleStyle.Render(title),
-			subtitleStyle.Render(hint),
-			modeStyle.Render(modeHint),
-		)
-		account := lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render("Account:"), accountView)
-		to := lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render("To:"), toView)
-		subject := lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render("Subject:"), subjectView)
-
-		separator := lipgloss.NewStyle().
-			Width(width-4).
-			Border(lipgloss.NormalBorder(), false, false, true, false).
-			BorderForeground(m.styles.Palette.Faint).
-			MarginTop(1).
-			MarginBottom(1).
-			Render("")
-
-		// Body editor
-		m.bodyInput.SetWidth(width - 4)
-		m.bodyInput.SetHeight(height - 12) // Reserve space for headers
-
-		bodyView := m.bodyInput.View()
-		if m.focusIndex == 3 {
-			bodyView = lipgloss.NewStyle().Border(lipgloss.NormalBorder(), false, false, false, true).BorderForeground(m.styles.Palette.Primary).Render(bodyView)
-		}
-
-		composeContext := ""
-		if title != "Composer" || hint != "Write now, save when ready." {
-			composeContext = contextCardStyle.Render(lipgloss.JoinVertical(
-				lipgloss.Left,
-				contextTitleStyle.Render(title),
-				contextHintStyle.Render(hint),
-			))
-		}
-
-		content := lipgloss.JoinVertical(lipgloss.Left,
-			header,
-			"",
-			account,
-			to,
-			subject,
-			separator,
-			composeContext,
-			bodyView,
-		)
-
-		return style.Render(content)
+		return style.Render(renderComposeContent(m, width, height, titleStyle))
 	}
 
 	if len(m.messages) == 0 || m.listCursor < 0 || m.listCursor >= len(m.messages) {
 		empty := lipgloss.JoinVertical(
 			lipgloss.Left,
 			titleStyle.Render("Welcome to Postero"),
-			subtitleStyle.Render("Choose a mailbox and select a message to start reading."),
+			lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Render("Choose a mailbox and select a message to start reading."),
 		)
 		return style.Render(lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, empty))
 	}
@@ -137,11 +43,114 @@ func renderContent(m Model, width, height int) string {
 	return style.Render(content)
 }
 
+func renderComposeContent(m Model, width, height int, titleStyle lipgloss.Style) string {
+	if m.activeDraft == nil {
+		return "Loading draft..."
+	}
+
+	labelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Width(8).Align(lipgloss.Right).MarginRight(1)
+	modeStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+
+	title, _ := composeContextText(m)
+	headerLines := []string{titleStyle.Render(title)}
+	headerLines = append(headerLines, modeStyle.Render(composeModeHint(m.composeEditing, width)))
+	header := lipgloss.JoinVertical(lipgloss.Left, headerLines...)
+	separator := lipgloss.NewStyle().
+		Width(width-4).
+		Border(lipgloss.NormalBorder(), false, false, true, false).
+		BorderForeground(m.styles.Palette.Faint).
+		MarginTop(1).
+		MarginBottom(1).
+		Render("")
+
+	m.bodyInput.SetWidth(width - 4)
+	m.bodyInput.SetHeight(height - 12)
+	bodyView := composeBodyView(m)
+
+	return lipgloss.JoinVertical(
+		lipgloss.Left,
+		header,
+		"",
+		lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render("Account:"), composeAccountView(m)),
+		lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render("To:"), composeFieldView(m, 1, m.toInput.View())),
+		lipgloss.JoinHorizontal(lipgloss.Top, labelStyle.Render("Subject:"), composeFieldView(m, 2, m.subjectInput.View())),
+		separator,
+		bodyView,
+	)
+}
+
+func composeAccountView(m Model) string {
+	accountStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
+	accountHintStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+	accountValue := m.composeAccountLabel()
+	accountView := accountStyle.Render(accountValue)
+	if m.focusIndex != 0 {
+		return accountView
+	}
+	accountView = lipgloss.NewStyle().Foreground(m.styles.Palette.Primary).Bold(true).Render(accountValue)
+	return lipgloss.JoinHorizontal(lipgloss.Left, accountView, accountHintStyle.Render("  h/l or ↑/↓ switch"))
+}
+
+func composeFieldView(m Model, focusIndex int, view string) string {
+	if m.focusIndex != focusIndex {
+		return view
+	}
+	return lipgloss.NewStyle().Foreground(m.styles.Palette.Primary).Render(view)
+}
+
+func composeBodyView(m Model) string {
+	bodyView := m.bodyInput.View()
+	if m.focusIndex != 3 {
+		return bodyView
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder(), false, false, false, true).
+		BorderForeground(m.styles.Palette.Primary).
+		Render(bodyView)
+}
+
+func composeContextText(m Model) (string, string) {
+	title := strings.TrimSpace(m.composeTitle)
+	if title == "" {
+		title = "Composer"
+	}
+	hint := strings.TrimSpace(m.composeHint)
+	if hint == "" {
+		hint = "Write now, save when ready."
+	}
+	return title, hint
+}
+
+func composeModeHint(composeEditing bool, width int) string {
+	if composeEditing {
+		candidates := []string{
+			"Insert. Esc normal.",
+			"Insert. Esc normal.",
+		}
+		for _, candidate := range candidates {
+			if lipgloss.Width(candidate) <= max(width-4, 1) {
+				return candidate
+			}
+		}
+		return candidates[len(candidates)-1]
+	}
+	candidates := []string{
+		"Normal. Enter/i/o/O edit.",
+		"Normal. i/o/O edit.",
+	}
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= max(width-4, 1) {
+			return candidate
+		}
+	}
+	return candidates[len(candidates)-1]
+}
+
 func contentViewportLayout(m Model, width, height int) (string, int, int) {
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight).MarginBottom(1).Width(max(1, width-4))
+	titleStyle := paneTitleStyle(m, stateContent).MarginBottom(1).Width(max(1, width-4))
 	metaLabelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Width(8)
 	metaValueStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
-	hintStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
+	hintStyle := paneSubtitleStyle(m, stateContent)
 	statusStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Faint).Padding(0, 1)
 	renderHeader := func(label, value string) string {
 		return lipgloss.JoinHorizontal(lipgloss.Top,
@@ -169,16 +178,13 @@ func contentViewportLayout(m Model, width, height int) (string, int, int) {
 		MarginBottom(1).
 		Render("")
 	bodyWidth := max(1, width-4)
-	bodyHeight := height - lipgloss.Height(lipgloss.JoinVertical(
+	bodyHeight := max(height-lipgloss.Height(lipgloss.JoinVertical(
 		lipgloss.Left,
 		titleStyle.Render(msg.Subject),
 		renderMessageChips(msg, false),
 		headerMeta,
 		separator,
-	))
-	if bodyHeight < 1 {
-		bodyHeight = 1
-	}
+	)), 1)
 	statusText := contentViewportStatus(m.contentViewport.YOffset, bodyHeight, contentLineCount(m.currentMessageBody()))
 	statusView := statusStyle.Render(statusText)
 	readerControls := joinHeaderColumns(
@@ -196,10 +202,7 @@ func contentViewportLayout(m Model, width, height int) (string, int, int) {
 		separator,
 	)
 
-	bodyHeight = height - lipgloss.Height(headerBlock)
-	if bodyHeight < 1 {
-		bodyHeight = 1
-	}
+	bodyHeight = max(height-lipgloss.Height(headerBlock), 1)
 
 	return headerBlock, bodyWidth, bodyHeight
 }
@@ -207,10 +210,10 @@ func contentViewportLayout(m Model, width, height int) (string, int, int) {
 func contentViewportHint(width, statusWidth int) string {
 	availableWidth := width - statusWidth - 2
 	candidates := []string{
-		"j/k line | ctrl+d/u half | pgup/dn | g/G",
-		"j/k | ctrl+d/u | pgup/dn | g/G",
-		"j/k | pgup/dn | g/G",
-		"j/k | g/G",
+		"h/l pane | j/k line | ctrl+d/u | gg/G | 0/$",
+		"j/k | ctrl+d/u | gg/G | 0/$",
+		"j/k | gg/G | 0/$",
+		"j/k | gg/G",
 	}
 	for _, candidate := range candidates {
 		if lipgloss.Width(candidate) <= availableWidth {

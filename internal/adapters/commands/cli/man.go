@@ -14,7 +14,7 @@ var manCmd = &cobra.Command{
 	Long:   `Generate man pages for all postero commands in the specified directory.`,
 	Args:   cobra.ExactArgs(1),
 	Hidden: true, // Might not need to be shown in general help
-	RunE: func(cmd *cobra.Command, args []string) error {
+	RunE: func(_ *cobra.Command, args []string) error {
 		dir := args[0]
 		err := os.MkdirAll(dir, 0o700)
 		if err != nil {

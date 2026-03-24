@@ -23,19 +23,19 @@ func NewMockRepository() ports.IMAPRepository {
 }
 
 // Connect establishes a mock connection
-func (m *MockRepository) Connect(ctx context.Context, host string, port int, username, password string, authType string, useTLS bool) error {
+func (m *MockRepository) Connect(_ context.Context, _ string, _ int, _ string, _ string, _ string, _ bool) error {
 	m.connected = true
 	return nil
 }
 
 // Disconnect closes the mock connection
-func (m *MockRepository) Disconnect(ctx context.Context) error {
+func (m *MockRepository) Disconnect(_ context.Context) error {
 	m.connected = false
 	return nil
 }
 
 // Fetch retrieves mock test messages
-func (m *MockRepository) Fetch(ctx context.Context, mailbox string, limit int) ([]*models.Message, error) {
+func (m *MockRepository) Fetch(_ context.Context, _ string, limit int) ([]*models.Message, error) {
 	if !m.connected {
 		return nil, ErrNotConnected
 	}

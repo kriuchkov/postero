@@ -1,7 +1,8 @@
-# Editor/IDE
+.github/agents/
 .idea/
 .vscode/
 .dev
+.tmp
 
 *.exe
 *.exe~
