@@ -22,6 +22,9 @@ func TestLoadConfig(t *testing.T) {
 
 	// Verify defaults are set
 	assert.Equal(t, "dark", cfg.Theme.Name)
+	assert.Equal(t, 30, cfg.TUI.ListPageSize)
+	assert.Equal(t, 5, cfg.TUI.ListPrefetchAhead)
+	assert.Equal(t, 120, cfg.TUI.LoadingTickMS)
 	assert.Equal(t, filepath.Join(configDir, "config.yaml"), UsedConfigFile())
 	assert.FileExists(t, filepath.Join(configDir, "config.yaml"))
 }
@@ -42,6 +45,48 @@ func TestLoadConfigCreatesDefaultConfigFile(t *testing.T) {
 
 	assert.Contains(t, string(content), "backend: sqlite")
 	assert.Contains(t, string(content), "name: dark")
+	assert.Contains(t, string(content), "list_page_size: 30")
+}
+
+func TestLoadConfigAppliesTUIOverrides(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	configDir := t.TempDir()
+	t.Setenv("POSTERO_CONFIG_DIR", configDir)
+
+	configFile := filepath.Join(configDir, "config.yaml")
+	content := []byte(`tui:
+  list_page_size: 60
+  list_prefetch_ahead: 9
+  loading_tick_ms: 80
+`)
+	require.NoError(t, os.WriteFile(configFile, content, 0o644))
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+
+	assert.Equal(t, 60, cfg.TUI.ListPageSize)
+	assert.Equal(t, 9, cfg.TUI.ListPrefetchAhead)
+	assert.Equal(t, 80, cfg.TUI.LoadingTickMS)
+}
+
+func TestLoadConfigAppliesTUIEnvOverrides(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	configDir := t.TempDir()
+	t.Setenv("POSTERO_CONFIG_DIR", configDir)
+	t.Setenv("POSTERO_TUI_LIST_PAGE_SIZE", "64")
+	t.Setenv("POSTERO_TUI_LIST_PREFETCH_AHEAD", "11")
+	t.Setenv("POSTERO_TUI_LOADING_TICK_MS", "95")
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+
+	assert.Equal(t, 64, cfg.TUI.ListPageSize)
+	assert.Equal(t, 11, cfg.TUI.ListPrefetchAhead)
+	assert.Equal(t, 95, cfg.TUI.LoadingTickMS)
 }
 
 func TestLoadConfigAppliesProtocolCredentials(t *testing.T) {

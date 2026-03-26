@@ -39,6 +39,7 @@ type Config struct {
 	Accounts    []AccountConfig   `mapstructure:"accounts"     yaml:"accounts,omitempty"`
 	Storage     StorageConfig     `mapstructure:"storage"      yaml:"storage,omitempty"`
 	Theme       ThemeConfig       `mapstructure:"theme"        yaml:"theme,omitempty"`
+	TUI         TUIConfig         `mapstructure:"tui"          yaml:"tui,omitempty"`
 	Keybindings KeybindingsConfig `mapstructure:"keybindings"  yaml:"keybindings,omitempty"`
 	Filters     map[string]string `mapstructure:"filters"      yaml:"filters,omitempty"`
 	DataPath    string            `mapstructure:"data_path"    yaml:"data_path,omitempty"`
@@ -98,6 +99,12 @@ type ThemeConfig struct {
 	SubText   string `mapstructure:"sub_text"  yaml:"sub_text,omitempty"`
 	Highlight string `mapstructure:"highlight" yaml:"highlight,omitempty"`
 	Faint     string `mapstructure:"faint"     yaml:"faint,omitempty"`
+}
+
+type TUIConfig struct {
+	ListPageSize      int `mapstructure:"list_page_size"      yaml:"list_page_size,omitempty"`
+	ListPrefetchAhead int `mapstructure:"list_prefetch_ahead" yaml:"list_prefetch_ahead,omitempty"`
+	LoadingTickMS     int `mapstructure:"loading_tick_ms"     yaml:"loading_tick_ms,omitempty"`
 }
 
 type KeybindingsConfig struct {
@@ -201,6 +208,9 @@ func setConfigDefaults(v *viper.Viper, configDir string) {
 	v.SetDefault("theme.sub_text", "#B8B8B8")
 	v.SetDefault("theme.highlight", "#FFFFFF")
 	v.SetDefault("theme.faint", "#4A4A4A")
+	v.SetDefault("tui.list_page_size", 30)
+	v.SetDefault("tui.list_prefetch_ahead", 5)
+	v.SetDefault("tui.loading_tick_ms", 120)
 	v.SetDefault("data_path", filepath.Join(configDir, "data"))
 }
 

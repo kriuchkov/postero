@@ -52,7 +52,7 @@ func TestComposeViewRendersAccountSelector(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 40
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
 
 	view := m.View()
 
@@ -79,7 +79,7 @@ func TestComposeViewKeepsTopHeaderVisible(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 40
-	m.enterComposeState(&models.MessageDTO{ID: "draft-1", AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
+	m.enterComposeState(&models.Message{ID: "draft-1", AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
 
 	header := renderHeader(m, m.width)
 
@@ -105,7 +105,7 @@ func TestComposeHeaderShowsAccountActionOnlyOnAccountFocus(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 40
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
 
 	header := renderHeader(m, m.width)
 	assert.Contains(t, header, "H/L")
@@ -122,7 +122,7 @@ func TestComposeHeaderHidesBodyActionInInsertMode(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 40
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 3)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 3)
 
 	header := renderHeader(m, m.width)
 	assert.Contains(t, header, "O/O")
@@ -137,7 +137,7 @@ func TestComposeHeaderHidesBodyActionInInsertMode(t *testing.T) {
 
 func TestComposeHeaderContextHighlightsCurrentAction(t *testing.T) {
 	m := testModel()
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
 
 	context := currentComposeHeaderContext(m)
 	assert.True(t, context.showAccount)
@@ -173,7 +173,7 @@ func TestComposeHeaderHidesMoveActionInInsertMode(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 40
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 2)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 2)
 
 	header := renderHeader(m, m.width)
 	assert.Contains(t, header, "J/K")
@@ -190,7 +190,7 @@ func TestComposeHeaderShowsSingleContextActionOnMediumWidth(t *testing.T) {
 	m := testModel()
 	m.width = 96
 	m.height = 24
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
 
 	header := renderHeader(m, m.width)
 	assert.Contains(t, header, "H/L")
@@ -220,7 +220,7 @@ func TestComposeHeaderOmitsContextActionOnTightMediumWidth(t *testing.T) {
 	m := testModel()
 	m.width = 88
 	m.height = 24
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 3)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 3)
 
 	header := renderHeader(m, m.width)
 	assert.Contains(t, header, "CTRL+O")
@@ -235,7 +235,7 @@ func TestComposeHeaderOmitsContextActionOnTightMediumWidth(t *testing.T) {
 func TestComposeHeaderActionSpecsEmphasizeCurrentContext(t *testing.T) {
 	m := testModel()
 	m.width = 120
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
 
 	actions := composeHeaderActionSpecs(m, m.width)
 	assert.Contains(t, actions, composeHeaderActionSpec{key: "H/L", action: "acct", tone: composeActionSecondary, emphasize: true})
@@ -280,7 +280,7 @@ func TestComposeViewCompactsHeaderActionsOnNarrowWidth(t *testing.T) {
 	m := testModel()
 	m.width = 78
 	m.height = 24
-	m.enterComposeState(&models.MessageDTO{ID: "draft-1", AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
+	m.enterComposeState(&models.Message{ID: "draft-1", AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
 
 	header := renderHeader(m, m.width)
 
@@ -347,8 +347,9 @@ func TestViewRendersFixedFooterHelpBar(t *testing.T) {
 	view := m.View()
 
 	assert.Contains(t, view, "Ready")
-	assert.Contains(t, view, "j/k move")
-	assert.Contains(t, view, "enter/l read")
+	assert.Contains(t, view, "j/k")
+	assert.Contains(t, view, "enter/l")
+	assert.Contains(t, view, "h/l")
 	assert.Contains(t, view, "gg/G")
 	assert.Contains(t, view, "H/M/L")
 }
@@ -364,11 +365,141 @@ func TestRenderFooterShowsErrorStatus(t *testing.T) {
 	assert.Contains(t, footer, "/ search")
 }
 
+func TestRenderFooterShowsLoadingMoreIndicator(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+	m.messagesLoading = true
+	m.fetchOffset = 30
+	m.loadingFrame = 2
+
+	footer := renderFooter(m, 100)
+
+	assert.Contains(t, footer, "loading more")
+	assert.Contains(t, footer, "|")
+	assert.Contains(t, footer, "Ready")
+}
+
+func TestRenderFooterShowsBackendSearchBadge(t *testing.T) {
+	m := testModel()
+	m.searchActive = true
+	m.searchQuery = "sender"
+	m.searchDebouncing = true
+
+	footer := renderFooter(m, 120)
+
+	assert.Contains(t, footer, "backend search pending")
+	assert.Contains(t, footer, "type to backend-search")
+}
+
+func TestListLoadingRowStyleDiffersBetweenInitialAndLoadMore(t *testing.T) {
+	m := testModel()
+
+	initial := listLoadingRowStyle(m, false)
+	more := listLoadingRowStyle(m, true)
+
+	assert.NotEqual(t, initial.GetBackground(), more.GetBackground())
+	assert.NotEqual(t, initial.GetBold(), more.GetBold())
+}
+
+func TestRenderFooterShowsSidebarTagHotkeys(t *testing.T) {
+	m := testModel()
+	m.state = stateSidebar
+	m.allMessages = []*models.Message{
+		{Labels: []string{"inbox", "github"}},
+		{Labels: []string{"inbox", "work"}},
+	}
+	m.sidebarTagSource = append([]*models.Message{}, m.allMessages...)
+
+	footer := renderFooter(m, 180)
+
+	assert.Contains(t, footer, "tags g github")
+	assert.Contains(t, footer, "w work")
+}
+
+func TestSidebarFooterHelpOmitsTagLegendFromNavigationText(t *testing.T) {
+	m := testModel()
+	m.state = stateSidebar
+	m.allMessages = []*models.Message{{Labels: []string{"inbox", "github"}}}
+	m.sidebarTagSource = append([]*models.Message{}, m.allMessages...)
+
+	candidates := footerHelpCandidates(m)
+	require.NotEmpty(t, candidates)
+	assert.NotContains(t, candidates[0], "tags ")
+	assert.Contains(t, candidates[0], "j/k move")
+	assert.Contains(t, candidates[0], "enter/l open")
+	assert.NotContains(t, candidates[0], "H/M/L")
+	assert.NotContains(t, candidates[0], "h/l panes")
+}
+
+func TestListFooterHelpShowsOnlyListRelevantHotkeys(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+
+	candidates := footerHelpCandidates(m)
+	require.NotEmpty(t, candidates)
+	assert.Contains(t, candidates[0], "enter/l read")
+	assert.Contains(t, candidates[0], "h/l panes")
+	assert.Contains(t, candidates[0], "H/M/L")
+	assert.Contains(t, candidates[0], "gg/G")
+	assert.NotContains(t, candidates[0], "0/$")
+}
+
+func TestContentFooterHelpOmitsListOnlyHotkeys(t *testing.T) {
+	m := testModel()
+	m.state = stateContent
+
+	candidates := footerHelpCandidates(m)
+	require.NotEmpty(t, candidates)
+	assert.Contains(t, candidates[0], "h back")
+	assert.NotContains(t, candidates[0], "h/l panes")
+	assert.NotContains(t, candidates[0], "H/M/L")
+	assert.NotContains(t, candidates[0], "enter/l read")
+	assert.Contains(t, candidates[0], "gg/G")
+	assert.NotContains(t, candidates[0], "0/$")
+}
+
+func TestFooterHelpKeepsMessageActionKeysCompact(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+
+	candidates := footerHelpCandidates(m)
+	require.NotEmpty(t, candidates)
+	assert.Contains(t, candidates[0], "r/R/f")
+	assert.Contains(t, candidates[0], "a/!/d")
+}
+
+func TestRenderFooterShowsActiveTagIndicator(t *testing.T) {
+	m := testModel()
+	m.state = stateSidebar
+	m.activeTagID = "project_alpha"
+
+	footer := renderFooter(m, 140)
+
+	assert.Contains(t, footer, "tag: project alpha")
+}
+
+func TestFooterTagBadgeStyleVariesByScopeAndSearch(t *testing.T) {
+	m := testModel()
+	m.activeTagID = "github"
+
+	plain := footerTagBadgeStyle(m)
+
+	m.activeAccountID = "personal"
+	accountScoped := footerTagBadgeStyle(m)
+
+	m.searchActive = true
+	searchActive := footerTagBadgeStyle(m)
+
+	assert.NotEqual(t, plain.GetBackground(), accountScoped.GetBackground())
+	assert.NotEqual(t, plain.GetBackground(), searchActive.GetBackground())
+	assert.NotEqual(t, accountScoped.GetBackground(), searchActive.GetBackground())
+}
+
 func TestRenderFooterShowsComposeModeSpecificHelp(t *testing.T) {
 	m := testModel()
 	m.width = 140
 	m.height = 30
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
 
 	footer := renderFooter(m, 140)
 	assert.Contains(t, footer, "h/l acct")
@@ -387,7 +518,7 @@ func TestRenderFooterShowsComposeFieldSpecificHelp(t *testing.T) {
 	m := testModel()
 	m.width = 140
 	m.height = 30
-	m.enterComposeState(&models.MessageDTO{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 2)
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 2)
 
 	footer := renderFooter(m, 140)
 	assert.Contains(t, footer, "enter/i edit")
@@ -427,7 +558,7 @@ func TestListHidesScrollIndicatorForShortLists(t *testing.T) {
 }
 
 func TestRenderMessageChipsUsesDifferentSelectedStyling(t *testing.T) {
-	msg := &models.MessageDTO{IsRead: false, IsDraft: true, IsSpam: true, Labels: []string{"archive"}}
+	msg := &models.Message{IsRead: false, IsDraft: true, IsSpam: true, Labels: []string{"archive"}}
 
 	plain := renderMessageChips(msg, false)
 	selected := renderMessageChips(msg, true)
@@ -450,15 +581,22 @@ func TestRenderSidebarShowsSectionsAndAccountLabels(t *testing.T) {
 	m := testModel()
 	m.sidebarItems = []string{"Inbox", "Drafts", "", "Accounts:", "  personal", "  work"}
 	m.sidebarCursor = 4
+	m.allMessages = []*models.Message{
+		{AccountID: "personal", Labels: []string{"inbox", "project_alpha"}},
+		{AccountID: "work", Labels: []string{"important"}, IsDraft: true},
+	}
+	m.sidebarTagSource = append([]*models.Message{}, m.allMessages...)
 
 	sidebar := renderSidebar(m, 24, 18)
 
-	assert.Contains(t, sidebar, "Mailboxes")
-	assert.Contains(t, sidebar, "Favorites")
-	assert.Contains(t, sidebar, "Accounts")
-	assert.Contains(t, sidebar, "◎ Inbox")
-	assert.Contains(t, sidebar, "✎ Drafts")
-	assert.Contains(t, sidebar, "• personal")
+	assert.Contains(t, sidebar, "ACCOUNTS")
+	assert.Contains(t, sidebar, "FOLDERS")
+	assert.Contains(t, sidebar, "TAGS")
+	assert.Contains(t, sidebar, "[1] personal")
+	assert.Contains(t, sidebar, "Inbox (1)")
+	assert.Contains(t, sidebar, "Drafts (1)")
+	assert.Contains(t, sidebar, "[P] project alpha")
+	assert.Contains(t, sidebar, "[I] important")
 }
 
 func TestSidebarItemStyleUsesDifferentSelectedAndMutedPalette(t *testing.T) {
@@ -510,14 +648,13 @@ func TestViewShowsSearchModeAndFilterSummary(t *testing.T) {
 	m.openSearchPrompt()
 	m.searchInput.SetValue("sender")
 	m.searchQuery = "sender"
-	m.applySearchFilter()
 
 	view := m.View()
 
 	assert.Contains(t, view, "/ Search")
 	assert.Contains(t, view, ": Cmd")
 	assert.Contains(t, view, "/ sender")
-	assert.Contains(t, view, "live filter")
+	assert.Contains(t, view, "backend search")
 }
 
 func TestViewShowsCommandModePrompt(t *testing.T) {
@@ -554,7 +691,7 @@ func TestViewShowsUndoActionWhenPending(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 40
-	m.pendingUndo = &undoState{message: cloneMessageDTO(m.messages[0]), action: "trash", token: 1}
+	m.pendingUndo = &undoState{message: cloneMessage(m.messages[0]), action: "trash", token: 1}
 
 	view := m.View()
 
@@ -589,6 +726,46 @@ func TestListShowsSearchSpecificEmptyState(t *testing.T) {
 	assert.Contains(t, list, "clear")
 }
 
+func TestListShowsInlineLoadingRow(t *testing.T) {
+	m := testModel()
+	m.messages = sampleMessages()
+	m.messagesLoading = true
+	m.fetchOffset = 30
+	m.loadingFrame = 1
+
+	list := renderList(m, 44, 18)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(list, "")
+
+	assert.Contains(t, clean, `\ Loading more messages...`)
+}
+
+func TestListShowsInitialLoadingRowWhenMailboxIsEmpty(t *testing.T) {
+	m := testModel()
+	m.messages = nil
+	m.messagesLoading = true
+	m.loadingFrame = 0
+
+	list := renderList(m, 44, 18)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(list, "")
+
+	assert.Contains(t, clean, "- Loading mailbox...")
+	assert.NotContains(t, clean, "No messages")
+}
+
+func TestListShowsSearchSpecificLoadingRow(t *testing.T) {
+	m := testModel()
+	m.messages = sampleMessages()
+	m.messagesLoading = true
+	m.fetchOffset = 30
+	m.loadingFrame = 3
+	m.searchQuery = "security"
+
+	list := renderList(m, 44, 18)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(list, "")
+
+	assert.Contains(t, clean, "/ Searching more messages...")
+}
+
 func TestSelectedListCardKeepsAlignedRowWidths(t *testing.T) {
 	m := testModel()
 	m.width = 120
@@ -602,7 +779,7 @@ func TestSelectedListCardKeepsAlignedRowWidths(t *testing.T) {
 	lines := strings.Split(clean, "\n")
 	matched := make([]string, 0, 4)
 	for _, line := range lines {
-		if strings.Contains(line, "tester@test.local") || strings.Contains(line, "(No Subject)") || strings.Contains(line, "Draft") {
+		if strings.Contains(line, "me@example.com") || strings.Contains(line, "Draft subject") || strings.Contains(line, "Draft body") {
 			matched = append(matched, line)
 		}
 	}
@@ -612,12 +789,156 @@ func TestSelectedListCardKeepsAlignedRowWidths(t *testing.T) {
 	assert.Equal(t, firstWidth, lipgloss.Width(matched[2]))
 }
 
+func TestListShowsFirstCustomTagInline(t *testing.T) {
+	m := testModel()
+	m.width = 120
+	m.height = 24
+	m.state = stateList
+	m.messages = []*models.Message{{
+		ID:        "msg-tagged",
+		AccountID: "personal",
+		ThreadID:  "thread-tagged",
+		Subject:   "Project Sync Meeting Notes",
+		From:      "alex@postero.dev",
+		Body:      "Here are the notes from today's sync.",
+		Labels:    []string{"inbox", "work"},
+		Date:      sampleMessages()[0].Date,
+	}}
+	m.listCursor = 0
+
+	list := renderList(m, 44, 18)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(list, "")
+
+	assert.Contains(t, clean, "[work] Project Sync Meeting Notes")
+}
+
+func TestRenderListCardRendersTagChipsAndPreview(t *testing.T) {
+	m := testModel()
+	msg := &models.Message{
+		ID:        "msg-card",
+		AccountID: "personal",
+		ThreadID:  "thread-card",
+		Subject:   "Project Sync Meeting Notes",
+		From:      "alex@postero.dev",
+		Body:      "Here are the notes from today's sync.",
+		Labels:    []string{"inbox", "work", "archive"},
+		Date:      sampleMessages()[0].Date,
+		IsDraft:   true,
+	}
+
+	card, cardHeight := renderListCard(m, msg, 40, listCursorActive)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(card, "")
+
+	assert.Equal(t, lipgloss.Height(clean), cardHeight)
+	assert.Contains(t, clean, "alex@postero.dev")
+	assert.Contains(t, clean, "[work] Project Sync Meeting Notes")
+	assert.Contains(t, clean, "Draft")
+	assert.Contains(t, clean, "Archive")
+	assert.Contains(t, clean, "Here are the notes from today's sync.")
+}
+
+func TestListWindowRangeUsesMeasuredCardHeights(t *testing.T) {
+	m := testModel()
+	m.messages = []*models.Message{
+		{ID: "msg-1", Subject: "One", From: "one@example.com", Body: "Body", Date: sampleMessages()[0].Date, IsRead: true},
+		{ID: "msg-2", Subject: "Two", From: "two@example.com", Body: "Body", Date: sampleMessages()[0].Date, IsRead: true},
+		{ID: "msg-3", Subject: "Three", From: "three@example.com", Body: "Body", Date: sampleMessages()[0].Date, IsRead: true},
+		{ID: "msg-4", Subject: "Four", From: "four@example.com", Body: "Body", Date: sampleMessages()[0].Date, IsRead: true},
+	}
+	m.state = stateList
+	m.listCursor = 0
+
+	start, end := listWindowRange(m, 15)
+
+	assert.Equal(t, 0, start)
+	assert.Equal(t, 3, end)
+}
+
+func TestListRendersDenseRowsWithCursorMarker(t *testing.T) {
+	m := testModel()
+	m.width = 120
+	m.height = 24
+	m.state = stateList
+	m.listCursor = 0
+
+	list := renderList(m, 44, 18)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(list, "")
+
+	assert.Contains(t, clean, "▌")
+	assert.Contains(t, clean, "sender1@example.com")
+	assert.Contains(t, clean, "Subject 1")
+	assert.Contains(t, clean, "Body 1")
+	assert.NotContains(t, clean, "│ sender1@example.com")
+}
+
+func TestHeaderOmitsLayerSwitcher(t *testing.T) {
+	m := testModel()
+	m.width = 120
+	m.height = 40
+	m.state = stateContent
+
+	header := renderHeader(m, m.width)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(header, "")
+
+	assert.NotContains(t, clean, "Sidebar")
+	assert.NotContains(t, clean, "List")
+	assert.NotContains(t, clean, "Read")
+	assert.NotContains(t, clean, "h / l")
+}
+
+func TestHeaderPlacesBrowseActionsOnOneLine(t *testing.T) {
+	m := testModel()
+	m.width = 160
+	m.height = 40
+	m.state = stateList
+
+	header := renderHeader(m, m.width)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(header, "")
+	lines := strings.Split(clean, "\n")
+
+	actionLine := -1
+	for index, line := range lines {
+		if strings.Contains(line, "c Compose") && strings.Contains(line, "/ Search") && strings.Contains(line, ": Cmd") && strings.Contains(line, "r Reply") && strings.Contains(line, "a Archive") && strings.Contains(line, "d Trash") {
+			actionLine = index
+			break
+		}
+	}
+
+	assert.NotEqual(t, -1, actionLine)
+}
+
+func TestHeaderWrapsBrowseActionsWhenNarrow(t *testing.T) {
+	m := testModel()
+	m.width = 72
+	m.height = 40
+	m.state = stateList
+
+	header := renderHeader(m, m.width)
+	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(header, "")
+	lines := strings.Split(clean, "\n")
+
+	firstActionLine := -1
+	secondActionLine := -1
+	for index, line := range lines {
+		if strings.Contains(line, "c Compose") && strings.Contains(line, "/ Search") && strings.Contains(line, ": Cmd") {
+			firstActionLine = index
+		}
+		if strings.Contains(line, "r Reply") {
+			secondActionLine = index
+		}
+	}
+
+	assert.NotEqual(t, -1, firstActionLine)
+	assert.NotEqual(t, -1, secondActionLine)
+	assert.NotEqual(t, firstActionLine, secondActionLine)
+}
+
 func TestSelectedListCardWithoutChipsDoesNotRenderBlankHighlightedRow(t *testing.T) {
 	m := testModel()
 	m.width = 120
 	m.height = 24
 	m.state = stateList
-	m.messages = []*models.MessageDTO{{
+	m.messages = []*models.Message{{
 		ID:        "msg-clean",
 		AccountID: "personal",
 		ThreadID:  "thread-clean",
@@ -670,7 +991,9 @@ func TestRenderContentKeepsMessageHeaderVisibleWhileBodyIsScrolled(t *testing.T)
 	assert.Contains(t, content, "From:")
 	assert.Contains(t, content, "Mailbox:")
 	assert.Contains(t, content, "ctrl+d/u")
-	assert.Contains(t, content, "0/$")
+	assert.Contains(t, content, "h back")
+	assert.Contains(t, content, "gg/G")
+	assert.NotContains(t, content, "0/$")
 	assert.Contains(t, content, "/40")
 	assert.Contains(t, content, "Line 13:09 of a long message body")
 	assert.NotContains(t, content, "Line 13:01 of a long message body")

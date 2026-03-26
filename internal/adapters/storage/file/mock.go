@@ -2,6 +2,7 @@ package file
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
@@ -189,6 +190,12 @@ func (m *MockRepository) Search(_ context.Context, criteria models.SearchCriteri
 
 	for _, msg := range m.messages {
 		match := true
+
+		if criteria.Query != "" && !contains(msg.Subject, criteria.Query) && !contains(msg.From, criteria.Query) &&
+			!contains(strings.Join(msg.To, ","), criteria.Query) &&
+			!contains(msg.Body, criteria.Query) {
+			match = false
+		}
 
 		if criteria.Subject != "" && !contains(msg.Subject, criteria.Subject) {
 			match = false

@@ -11,7 +11,7 @@ import (
 
 func TestComposeAccountLabelFallsBackToSender(t *testing.T) {
 	m := testModel()
-	m.activeDraft = &models.MessageDTO{AccountID: "", From: "", Subject: "Hello"}
+	m.activeDraft = &models.Message{AccountID: "", From: "", Subject: "Hello"}
 	m.defaultAcctID = "work"
 
 	assert.Equal(t, "work <work@example.com>", m.composeAccountLabel())
@@ -33,7 +33,7 @@ func TestPersistActiveDraftCreatesDraftWithFallbackSender(t *testing.T) {
 	service := &messageServiceStub{inbox: sampleMessages(), composedDraftID: "draft-new"}
 	m := testModelWithService(service)
 	m.defaultAcctID = "work"
-	m.activeDraft = &models.MessageDTO{
+	m.activeDraft = &models.Message{
 		AccountID: "",
 		From:      "",
 		To:        []string{" user@example.com ", ""},
@@ -62,7 +62,7 @@ func TestPersistActiveDraftCreatesDraftWithFallbackSender(t *testing.T) {
 func TestPersistActiveDraftUpdatePreservesLocalFallbackValues(t *testing.T) {
 	service := &messageServiceStub{inbox: sampleMessages()}
 	m := testModelWithService(service)
-	m.activeDraft = &models.MessageDTO{
+	m.activeDraft = &models.Message{
 		ID:        "draft-1",
 		AccountID: "personal",
 		From:      "me@example.com",
@@ -98,7 +98,7 @@ func TestSenderForAccountFallsBackToDefaultSender(t *testing.T) {
 
 func TestCycleComposeAccountWrapsAcrossAccounts(t *testing.T) {
 	m := testModel()
-	m.activeDraft = &models.MessageDTO{AccountID: "personal", From: "me@example.com"}
+	m.activeDraft = &models.Message{AccountID: "personal", From: "me@example.com"}
 
 	m.cycleComposeAccount(-1)
 	assert.Equal(t, "work", m.activeDraft.AccountID)

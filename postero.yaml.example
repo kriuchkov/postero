@@ -18,6 +18,14 @@ accounts:
 
 data_path: "~/.local/share/postero"
 
+tui:
+  # Number of messages fetched per page in the interactive list.
+  list_page_size: 30
+  # How close the cursor should get to the bottom before fetching the next page.
+  list_prefetch_ahead: 5
+  # Spinner frame interval for loading indicators, in milliseconds.
+  loading_tick_ms: 120
+
 # Filters allow you to process rendering of specific MIME types
 # Make sure to install the binaries (e.g., w3m) used in the commands
 filters:

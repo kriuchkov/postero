@@ -216,6 +216,9 @@ func matchesCriteria(message *models.Message, criteria models.SearchCriteria) bo
 	if message == nil {
 		return false
 	}
+	if criteria.Query != "" && !matchesFreeTextQuery(message, criteria.Query) {
+		return false
+	}
 	if criteria.Subject != "" && !containsFold(message.Subject, criteria.Subject) {
 		return false
 	}
@@ -258,6 +261,22 @@ func matchesCriteria(message *models.Message, criteria models.SearchCriteria) bo
 		}
 	}
 	return true
+}
+
+func matchesFreeTextQuery(message *models.Message, query string) bool {
+	fields := []string{
+		message.Subject,
+		message.From,
+		strings.Join(message.To, " "),
+		strings.Join(message.Cc, " "),
+		message.Body,
+	}
+	for _, field := range fields {
+		if containsFold(field, query) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsFold(value, query string) bool {

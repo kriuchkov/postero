@@ -210,9 +210,8 @@ func contentViewportLayout(m Model, width, height int) (string, int, int) {
 func contentViewportHint(width, statusWidth int) string {
 	availableWidth := width - statusWidth - 2
 	candidates := []string{
-		"h/l pane | j/k line | ctrl+d/u | gg/G | 0/$",
-		"j/k | ctrl+d/u | gg/G | 0/$",
-		"j/k | gg/G | 0/$",
+		"h back | j/k line | ctrl+d/u | gg/G",
+		"j/k | ctrl+d/u | gg/G",
 		"j/k | gg/G",
 	}
 	for _, candidate := range candidates {

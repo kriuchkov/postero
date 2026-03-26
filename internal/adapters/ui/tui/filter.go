@@ -9,7 +9,7 @@ import (
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
-func (m Model) getFilteredBody(msg *models.MessageDTO) string {
+func (m Model) getFilteredBody(msg *models.Message) string {
 	if m.config == nil {
 		return defaultFallback(msg)
 	}
@@ -38,7 +38,7 @@ func (m Model) getFilteredBody(msg *models.MessageDTO) string {
 	return defaultFallback(msg)
 }
 
-func defaultFallback(msg *models.MessageDTO) string {
+func defaultFallback(msg *models.Message) string {
 	if msg.Body != "" {
 		return msg.Body
 	}

@@ -228,7 +228,7 @@ func TestRestoreMessagePersistsSnapshotState(t *testing.T) {
 	})).Return(nil)
 
 	svc := NewService(repo)
-	msg, err := svc.RestoreMessage(context.Background(), &models.MessageDTO{
+	msg, err := svc.RestoreMessage(context.Background(), &models.Message{
 		ID:        "msg-1",
 		AccountID: "personal",
 		Subject:   "Hello",

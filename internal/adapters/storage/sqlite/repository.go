@@ -256,6 +256,13 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 	`
 	var args []any
 
+	if criteria.Query != "" {
+		query += " AND (subject LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ? OR body LIKE ?)"
+		for range 4 {
+			args = append(args, "%"+criteria.Query+"%")
+		}
+	}
+
 	if criteria.Subject != "" {
 		query += " AND subject LIKE ?"
 		args = append(args, "%"+criteria.Subject+"%")

@@ -75,24 +75,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case !m.composeEditing && isSingleRune(msg, 'O'):
 				m.openComposeBody(true)
 				return m, nil
-			case key.Matches(msg, m.keys.Up) && !m.composeEditing:
+			case matchesUp(msg, m.keys.Up) && !m.composeEditing:
 				if m.focusIndex == 0 && msg.Type == tea.KeyUp {
 					m.cycleComposeAccount(-1)
 					return m, nil
 				}
 				m.moveComposeFocus(-1)
 				return m, nil
-			case key.Matches(msg, m.keys.Down) && !m.composeEditing:
+			case matchesDown(msg, m.keys.Down) && !m.composeEditing:
 				if m.focusIndex == 0 && msg.Type == tea.KeyDown {
 					m.cycleComposeAccount(1)
 					return m, nil
 				}
 				m.moveComposeFocus(1)
 				return m, nil
-			case key.Matches(msg, m.keys.Left) && !m.composeEditing && m.focusIndex == 0:
+			case matchesLeft(msg, m.keys.Left) && !m.composeEditing && m.focusIndex == 0:
 				m.cycleComposeAccount(-1)
 				return m, nil
-			case key.Matches(msg, m.keys.Right) && !m.composeEditing && m.focusIndex == 0:
+			case matchesRight(msg, m.keys.Right) && !m.composeEditing && m.focusIndex == 0:
 				m.cycleComposeAccount(1)
 				return m, nil
 			case key.Matches(msg, m.keys.Enter) && !m.composeEditing && m.focusIndex == 0:
@@ -199,35 +199,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyMsg:
 			switch {
 			case keyMatches(msg, m.keys.Esc):
-				m.clearSearch()
+				clearCmd := m.clearSearch()
 				m.setStatus("Search cleared")
-				return m, nil
+				return m, clearCmd
 			case keyMatches(msg, m.keys.Enter):
 				m.searchActive = false
 				m.searchInput.Blur()
 				if strings.TrimSpace(m.searchQuery) == "" {
 					m.setStatus("Search cleared")
-				} else {
-					m.setStatus(m.searchStatusMessage())
+					return m, nil
 				}
+				if m.searchDebouncing {
+					m.searchDebouncing = false
+					m.prepareFreshMessageFetch()
+					m.messages = nil
+					m.allMessages = nil
+					m.listCursor = 0
+					return m, m.fetchMessages()
+				}
+				m.setStatus(m.searchStatusMessage())
 				return m, nil
 			}
-		}
 
-		m.searchInput, cmd = m.searchInput.Update(msg)
-		m.searchQuery = strings.TrimSpace(m.searchInput.Value())
-		m.applySearchFilter()
-		if m.searchQuery == "" {
-			m.statusMessage = ""
-			m.statusError = false
+			previousQuery := m.searchQuery
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.searchQuery = strings.TrimSpace(m.searchInput.Value())
+			if m.searchQuery == previousQuery {
+				return m, cmd
+			}
+			m.searchToken++
+			m.searchDebouncing = strings.TrimSpace(m.searchQuery) != ""
+			if m.searchQuery == "" {
+				m.searchDebouncing = false
+				m.statusMessage = ""
+				m.statusError = false
+				m.prepareFreshMessageFetch()
+				m.messages = nil
+				m.allMessages = nil
+				m.listCursor = 0
+				return m, m.fetchMessages()
+			}
+			return m, m.searchDebounceCmd()
+		case messagesLoadedMsg, loadingTickMsg, undoExpiredMsg, tea.WindowSizeMsg, searchDebounceMsg:
+			// Let async runtime messages flow to the main dispatcher below.
+		default:
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			return m, cmd
 		}
-		return m, cmd
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if handled, motionCmd := m.handleBrowseMotion(msg); handled {
-			return m, motionCmd
+		if m.state != stateSidebar || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 || !sidebarConsumesTagHotkey(m, msg.Runes[0]) {
+			if handled, motionCmd := m.handleBrowseMotion(msg); handled {
+				return m, motionCmd
+			}
 		}
 
 		switch {
@@ -238,6 +264,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case keyMatches(msg, m.keys.Refresh):
 			m.setStatus("Mailbox refreshed")
+			m.prepareFreshMessageFetch()
+			return m, m.fetchMessages()
+		case m.state == stateSidebar && strings.TrimSpace(m.activeTagID) != "" && keyMatches(msg, m.keys.Esc):
+			m.activeTagID = ""
+			m.setStatus("Tag filter cleared")
+			m.prepareFreshMessageFetch()
 			return m, m.fetchMessages()
 		case keyMatches(msg, m.keys.Esc) && m.state == stateSidebar && strings.TrimSpace(m.activeAccountID) != "":
 			if _, ok := m.selectedAccountID(); ok {
@@ -245,9 +277,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.activeAccountID = ""
 			m.setStatus("Account scope cleared")
+			m.prepareFreshMessageFetch()
 			return m, m.fetchMessages()
+		case m.state == stateSidebar && msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && sidebarConsumesTagHotkey(m, msg.Runes[0]):
+			if tagID, ok := findSidebarTagByHotkey(m, msg.Runes[0]); ok {
+				m.activeTagID = tagID
+				m.setStatus("Tag selected: " + strings.ReplaceAll(tagID, "_", " "))
+				m.prepareFreshMessageFetch()
+				return m, m.fetchMessages()
+			}
 		case keyMatches(msg, m.keys.Undo) && m.pendingUndo != nil:
-			snapshot := cloneMessageDTO(m.pendingUndo.message)
+			snapshot := cloneMessage(m.pendingUndo.message)
 			m.pendingUndo = nil
 			if _, err := m.service.RestoreMessage(context.Background(), snapshot); err != nil {
 				m.setError("Undo failed")
@@ -255,7 +295,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.setStatus("Undo applied")
 			return m, m.fetchMessagesForID(snapshot.ID)
-		case keyMatches(msg, m.keys.Search):
+		case matchesSearch(msg, m.keys.Search):
 			m.openSearchPrompt()
 			m.setStatus("Search the current mailbox")
 			return m, nil
@@ -269,16 +309,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.markSelectedMessageRead(context.Background())
 			m.setStatus("Message marked as read")
+			m.prepareFreshMessageFetch()
 			return m, m.fetchMessagesForID(selected.ID)
 		case keyMatches(msg, m.keys.Esc) && strings.TrimSpace(m.searchQuery) != "":
-			m.clearSearch()
+			clearCmd := m.clearSearch()
 			m.setStatus("Search cleared")
-			return m, nil
+			return m, clearCmd
 		case keyMatches(msg, m.keys.Enter):
 			if m.state == stateSidebar {
 				oldState := m.state
 				m.nextFocus()
 				if oldState == stateSidebar && m.state == stateList {
+					m.prepareFreshMessageFetch()
 					return m, m.fetchMessages()
 				}
 				return m, nil
@@ -299,11 +341,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
-		case keyMatches(msg, m.keys.Up):
+		case matchesUp(msg, m.keys.Up):
 			if m.state == stateSidebar {
-				if m.sidebarCursor > 0 {
-					m.sidebarCursor--
-					return m, m.fetchMessages()
+				if moveCmd, moved := m.moveSidebarSelection(-1); moved {
+					return m, moveCmd
 				}
 				return m, nil
 			}
@@ -313,14 +354,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.markSelectedMessageRead(context.Background())
 					m.syncContentViewport(true)
 				}
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.SetYOffset(max(m.contentViewport.YOffset-1, 0))
-		case keyMatches(msg, m.keys.Down):
+		case matchesDown(msg, m.keys.Down):
 			if m.state == stateSidebar {
-				if m.sidebarCursor < len(m.sidebarItems)-1 {
-					m.sidebarCursor++
-					return m, m.fetchMessages()
+				if moveCmd, moved := m.moveSidebarSelection(1); moved {
+					return m, moveCmd
 				}
 				return m, nil
 			}
@@ -330,25 +370,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.markSelectedMessageRead(context.Background())
 					m.syncContentViewport(true)
 				}
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.SetYOffset(m.contentViewport.YOffset + 1)
-		case keyMatches(msg, m.keys.Right):
+		case matchesRight(msg, m.keys.Right):
 			oldState := m.state
 			m.nextFocus()
 			if oldState == stateSidebar && m.state == stateList {
+				m.prepareFreshMessageFetch()
 				return m, m.fetchMessages()
 			}
 			if oldState == stateList && m.state == stateContent {
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
 			}
-		case keyMatches(msg, m.keys.Left):
+		case matchesLeft(msg, m.keys.Left):
 			m.prevFocus()
 		case keyMatches(msg, m.keys.PageUp):
 			if m.state == stateSidebar {
-				m.sidebarCursor = max(0, m.sidebarCursor-10)
-				return m, m.fetchMessages()
+				return m.sidebarMoveBy(-10)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
@@ -357,13 +397,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.listCursor = max(0, m.listCursor-10)
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.PageUp()
 		case keyMatches(msg, m.keys.PageDown):
 			if m.state == stateSidebar {
-				m.sidebarCursor = min(len(m.sidebarItems)-1, m.sidebarCursor+10)
-				return m, m.fetchMessages()
+				return m.sidebarMoveBy(10)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
@@ -372,13 +411,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.listCursor = min(len(m.messages)-1, m.listCursor+10)
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.PageDown()
 		case keyMatches(msg, m.keys.HalfUp):
 			if m.state == stateSidebar {
-				m.sidebarCursor = max(0, m.sidebarCursor-5)
-				return m, m.fetchMessages()
+				return m.sidebarMoveBy(-5)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
@@ -387,13 +425,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.listCursor = max(0, m.listCursor-5)
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.HalfPageUp()
 		case keyMatches(msg, m.keys.HalfDown):
 			if m.state == stateSidebar {
-				m.sidebarCursor = min(len(m.sidebarItems)-1, m.sidebarCursor+5)
-				return m, m.fetchMessages()
+				return m.sidebarMoveBy(5)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
@@ -402,25 +439,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.listCursor = min(len(m.messages)-1, m.listCursor+5)
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.HalfPageDown()
 		case keyMatches(msg, m.keys.Top):
 			if m.state == stateSidebar {
-				m.sidebarCursor = 0
-				return m, m.fetchMessages()
+				return m.sidebarJumpToTop()
 			}
 			if m.state == stateList {
 				m.listCursor = 0
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.GotoTop()
 		case keyMatches(msg, m.keys.Bottom):
 			if m.state == stateSidebar {
-				m.sidebarCursor = len(m.sidebarItems) - 1
-				return m, m.fetchMessages()
+				return m.sidebarJumpToBottom()
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
@@ -429,17 +464,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.listCursor = len(m.messages) - 1
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
-				return m, nil
+				return m, m.maybeFetchMoreMessages()
 			}
 			m.contentViewport.GotoBottom()
 		case keyMatches(msg, m.keys.Delete):
 			if selected, ok := m.selectedMessage(); ok {
-				snapshot := cloneMessageDTO(m.messages[m.listCursor])
+				snapshot := cloneMessage(m.messages[m.listCursor])
 				if m.isTrashSelection() {
 					if err := m.service.DeleteMessage(context.Background(), selected.ID); err == nil {
 						m.removeMessageAtCursor()
 						m.armUndo(snapshot, "delete")
 						m.setStatus("Message permanently deleted. Press u to undo")
+						m.prepareFreshMessageFetch()
 						return m, m.fetchMessagesAtCursor(m.listCursor)
 					}
 					m.setError("Permanent delete failed")
@@ -449,32 +485,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.removeMessageAtCursor()
 					m.armUndo(snapshot, "trash")
 					m.setStatus("Message moved to trash. Press u to undo")
+					m.prepareFreshMessageFetch()
 					return m, m.fetchMessagesAtCursor(m.listCursor)
 				}
 				m.setError("Delete failed")
 			}
 		case keyMatches(msg, m.keys.Archive):
 			if selected, ok := m.selectedMessage(); ok {
-				snapshot := cloneMessageDTO(m.messages[m.listCursor])
+				snapshot := cloneMessage(m.messages[m.listCursor])
 				if _, err := m.service.ArchiveMessage(context.Background(), selected.ID); err == nil {
 					if m.listCursor > 0 && m.listCursor >= len(m.messages)-1 {
 						m.listCursor--
 					}
 					m.armUndo(snapshot, "archive")
 					m.setStatus("Message archived. Press u to undo")
+					m.prepareFreshMessageFetch()
 					return m, m.fetchMessagesAtCursor(m.listCursor)
 				}
 				m.setError("Archive failed")
 			}
 		case keyMatches(msg, m.keys.Spam):
 			if selected, ok := m.selectedMessage(); ok {
-				snapshot := cloneMessageDTO(m.messages[m.listCursor])
+				snapshot := cloneMessage(m.messages[m.listCursor])
 				if _, err := m.service.MarkAsSpam(context.Background(), selected.ID); err == nil {
 					if m.listCursor > 0 && m.listCursor >= len(m.messages)-1 {
 						m.listCursor--
 					}
 					m.armUndo(snapshot, "spam")
 					m.setStatus("Message marked as spam. Press u to undo")
+					m.prepareFreshMessageFetch()
 					return m, m.fetchMessagesAtCursor(m.listCursor)
 				}
 				m.setError("Spam update failed")
@@ -503,47 +542,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-		case keyMatches(msg, m.keys.Reply):
+		case matchesReply(msg, m.keys.Reply):
 			if selected, ok := m.selectedMessage(); ok {
 				draft := compose.BuildReply(&selected, compose.ReplyOptions{Self: []string{m.senderForAccount(selected.AccountID)}})
-				m.enterComposeState(&models.MessageDTO{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Cc: draft.Cc, Body: draft.Body}, 3)
+				m.enterComposeState(&models.Message{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Cc: draft.Cc, Body: draft.Body}, 3)
 				m.setComposeContext("Reply", "Type above the quoted message.")
 				m.composeEditing = true
 				m.moveReplyCursorToStart()
 				m.clearStatus()
 			}
-		case keyMatches(msg, m.keys.ReplyAll):
+		case matchesReplyAll(msg, m.keys.ReplyAll):
 			if selected, ok := m.selectedMessage(); ok {
 				draft := compose.BuildReply(&selected, compose.ReplyOptions{ReplyAll: true, Self: []string{m.senderForAccount(selected.AccountID)}})
-				m.enterComposeState(&models.MessageDTO{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Cc: draft.Cc, Body: draft.Body}, 3)
+				m.enterComposeState(&models.Message{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Cc: draft.Cc, Body: draft.Body}, 3)
 				m.setComposeContext("Reply all", "Type above the quoted message.")
 				m.composeEditing = true
 				m.moveReplyCursorToStart()
 				m.clearStatus()
 			}
-		case keyMatches(msg, m.keys.Forward):
+		case matchesForward(msg, m.keys.Forward):
 			if selected, ok := m.selectedMessage(); ok {
 				draft := compose.BuildForward(&selected, nil, "")
-				m.enterComposeState(&models.MessageDTO{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Body: draft.Body}, 1)
+				m.enterComposeState(&models.Message{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Body: draft.Body}, 1)
 				m.setComposeContext("Forward", "Add recipients, then edit the forwarded message below.")
 				m.composeEditing = true
 				m.applyComposeFocus()
 				m.clearStatus()
 			}
-		case keyMatches(msg, m.keys.Compose):
-			m.enterComposeState(&models.MessageDTO{AccountID: m.defaultAcctID, From: m.defaultFrom, Subject: "", To: []string{}, Body: ""}, 0)
+		case matchesCompose(msg, m.keys.Compose):
+			m.enterComposeState(&models.Message{AccountID: m.defaultAcctID, From: m.defaultFrom, Subject: "", To: []string{}, Body: ""}, 0)
 			m.setComposeContext("Composer", "Write now, save when ready.")
 			m.composeEditing = false
 			m.clearStatus()
 		}
 	case messagesLoadedMsg:
+		if msg.scopeKey != "" && msg.scopeKey != m.currentMessageScopeKey() {
+			return m, nil
+		}
 		m.activeAccountID = strings.TrimSpace(msg.activeAccountID)
-		m.allMessages = append([]*models.MessageDTO{}, msg.messages...)
-		if strings.TrimSpace(m.searchQuery) == "" {
-			m.messages = append([]*models.MessageDTO{}, msg.messages...)
-			m.applyLoadedCursor(msg.targetCursor, msg.targetID)
+		m.activeTagID = strings.TrimSpace(msg.activeTagID)
+		m.searchDebouncing = false
+		m.messagesLoading = false
+		m.loadingFrame = 0
+		m.fetchOffset = msg.nextOffset
+		m.hasMoreMessages = msg.hasMore
+		if msg.appendPage {
+			m.allMessages = mergeMessages(m.allMessages, msg.messages)
+			if strings.TrimSpace(msg.activeTagID) == "" || len(m.sidebarTagSource) == 0 {
+				m.sidebarTagSource = mergeMessages(m.sidebarTagSource, msg.messages)
+			}
 		} else {
-			m.applySearchFilter()
+			m.allMessages = append([]*models.Message{}, msg.messages...)
+			if strings.TrimSpace(msg.activeTagID) == "" || len(m.sidebarTagSource) == 0 {
+				m.sidebarTagSource = append([]*models.Message{}, msg.messages...)
+			}
+		}
+		if msg.appendPage {
+			selectedID := m.currentMessageID()
+			m.messages = append([]*models.Message{}, m.allMessages...)
+			m.restoreListCursor(selectedID)
+		} else {
+			m.messages = append([]*models.Message{}, m.allMessages...)
 			m.applyLoadedCursor(msg.targetCursor, msg.targetID)
 		}
 		if len(m.messages) == 0 && !m.statusError {
@@ -551,6 +610,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncContentViewport(true)
 		return m, m.undoCountdownCmd()
+	case searchDebounceMsg:
+		if msg.token != m.searchToken || !m.searchDebouncing || strings.TrimSpace(msg.query) != strings.TrimSpace(m.searchQuery) {
+			return m, nil
+		}
+		m.searchDebouncing = false
+		m.prepareFreshMessageFetch()
+		m.messages = nil
+		m.allMessages = nil
+		m.listCursor = 0
+		return m, m.fetchMessages()
+	case loadingTickMsg:
+		if !m.messagesLoading || msg.token != m.loadingToken {
+			return m, nil
+		}
+		m.loadingFrame = msg.frame
+		return m, m.loadingTickCmd()
 	case undoExpiredMsg:
 		if m.pendingUndo != nil && m.pendingUndo.token == msg.token {
 			m.pendingUndo = nil
@@ -567,7 +642,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) enterComposeState(draft *models.MessageDTO, focusIndex int) {
+func (m *Model) enterComposeState(draft *models.Message, focusIndex int) {
 	m.state = stateCompose
 	m.activeDraft = draft
 	m.toInput.SetValue(strings.Join(draft.To, ", "))
@@ -584,7 +659,7 @@ func (m *Model) setComposeContext(title, hint string) {
 	m.composeHint = hint
 }
 
-func defaultComposeContext(draft *models.MessageDTO) (string, string) {
+func defaultComposeContext(draft *models.Message) (string, string) {
 	if draft != nil && strings.TrimSpace(draft.ID) != "" {
 		return "Draft", "Resume where you left off."
 	}
@@ -659,6 +734,167 @@ func isSingleRune(msg tea.KeyMsg, value rune) bool {
 	return msg.Type == tea.KeyRunes && len(msg.Runes) == 1 && msg.Runes[0] == value
 }
 
+func matchesUp(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'k')
+}
+
+func matchesDown(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'j')
+}
+
+func matchesLeft(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'h')
+}
+
+func matchesRight(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'l')
+}
+
+func matchesSearch(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, '/')
+}
+
+func matchesCompose(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'c')
+}
+
+func matchesReply(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'r')
+}
+
+func matchesReplyAll(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'R')
+}
+
+func matchesForward(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, 'f')
+}
+
+func sidebarConsumesTagHotkey(m Model, key rune) bool {
+	_, ok := findSidebarTagByHotkey(m, key)
+	return ok
+}
+
+func (m *Model) sidebarMoveBy(delta int) (Model, tea.Cmd) {
+	if delta == 0 {
+		return *m, nil
+	}
+	steps := delta
+	if steps < 0 {
+		steps = -steps
+	}
+	direction := 1
+	if delta < 0 {
+		direction = -1
+	}
+	moved := false
+	for range steps {
+		if !m.moveSidebarSelectionOne(direction) {
+			break
+		}
+		moved = true
+	}
+	if !moved {
+		return *m, nil
+	}
+	return *m, m.fetchMessages()
+}
+
+func (m *Model) moveSidebarSelection(step int) (tea.Cmd, bool) {
+	if step == 0 {
+		return nil, false
+	}
+	if !m.moveSidebarSelectionOne(step) {
+		return nil, false
+	}
+	return m.fetchMessages(), true
+}
+
+func (m *Model) moveSidebarSelectionOne(step int) bool {
+	tags := sidebarTags(*m)
+	if step > 0 {
+		return m.moveSidebarSelectionForward(tags)
+	}
+	return m.moveSidebarSelectionBackward(tags)
+}
+
+func (m *Model) moveSidebarSelectionForward(tags []sidebarSectionRow) bool {
+	if strings.TrimSpace(m.activeTagID) != "" {
+		index := sidebarActiveTagIndex(*m, tags)
+		if index >= 0 && index < len(tags)-1 {
+			m.activeTagID = tags[index+1].value
+			return true
+		}
+		return false
+	}
+	if m.sidebarCursor < len(m.sidebarItems)-1 {
+		m.sidebarCursor++
+		return true
+	}
+	if len(tags) > 0 {
+		m.activeTagID = tags[0].value
+		return true
+	}
+	return false
+}
+
+func (m *Model) moveSidebarSelectionBackward(tags []sidebarSectionRow) bool {
+	if strings.TrimSpace(m.activeTagID) != "" {
+		index := sidebarActiveTagIndex(*m, tags)
+		if index > 0 {
+			m.activeTagID = tags[index-1].value
+			return true
+		}
+		if index == 0 {
+			m.activeTagID = ""
+			if len(m.sidebarItems) > 0 {
+				m.sidebarCursor = len(m.sidebarItems) - 1
+			}
+			return true
+		}
+		m.activeTagID = ""
+		return len(m.sidebarItems) > 0
+	}
+	if m.sidebarCursor > 0 {
+		m.sidebarCursor--
+		return true
+	}
+	return false
+}
+
+func (m *Model) sidebarJumpToTop() (Model, tea.Cmd) {
+	if len(m.sidebarItems) == 0 {
+		return *m, nil
+	}
+	m.activeTagID = ""
+	m.sidebarCursor = 0
+	return *m, m.fetchMessages()
+}
+
+func (m *Model) sidebarJumpToBottom() (Model, tea.Cmd) {
+	tags := sidebarTags(*m)
+	if len(tags) > 0 {
+		m.activeTagID = tags[len(tags)-1].value
+		return *m, m.fetchMessages()
+	}
+	if len(m.sidebarItems) == 0 {
+		return *m, nil
+	}
+	m.activeTagID = ""
+	m.sidebarCursor = len(m.sidebarItems) - 1
+	return *m, m.fetchMessages()
+}
+
+func sidebarActiveTagIndex(m Model, tags []sidebarSectionRow) int {
+	active := strings.TrimSpace(m.activeTagID)
+	for index, row := range tags {
+		if strings.EqualFold(strings.TrimSpace(row.value), active) {
+			return index
+		}
+	}
+	return -1
+}
+
 func (m *Model) handleComposeMotion(msg tea.KeyMsg) bool {
 	if m.pendingMotion == "g" && !isSingleRune(msg, 'g') {
 		m.pendingMotion = ""
@@ -696,11 +932,9 @@ func (m *Model) handleBrowseMotion(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 	switch {
 	case isSingleRune(msg, 'n'):
-		m.repeatSearch(1)
-		return true, nil
+		return true, m.repeatSearch(1)
 	case isSingleRune(msg, 'N'):
-		m.repeatSearch(-1)
-		return true, nil
+		return true, m.repeatSearch(-1)
 	case isSingleRune(msg, 'H'):
 		return m.jumpToListViewport(listViewportTop)
 	case isSingleRune(msg, 'M'):
@@ -733,9 +967,9 @@ const (
 	listViewportBottom
 )
 
-func (m *Model) repeatSearch(step int) {
+func (m *Model) repeatSearch(step int) tea.Cmd {
 	if strings.TrimSpace(m.searchQuery) == "" || len(m.messages) == 0 || step == 0 {
-		return
+		return nil
 	}
 	if m.listCursor < 0 || m.listCursor >= len(m.messages) {
 		m.listCursor = 0
@@ -746,6 +980,7 @@ func (m *Model) repeatSearch(step int) {
 	m.markSelectedMessageRead(context.Background())
 	m.syncContentViewport(true)
 	m.setStatus(m.searchStatusMessage())
+	return m.maybeFetchMoreMessages()
 }
 
 func (m *Model) jumpToListViewport(target listViewportJump) (bool, tea.Cmd) {
@@ -778,8 +1013,8 @@ func (m *Model) jumpToListViewport(target listViewportJump) (bool, tea.Cmd) {
 func (m *Model) jumpToTop() tea.Cmd {
 	switch m.state {
 	case stateSidebar:
-		m.sidebarCursor = 0
-		return m.fetchMessages()
+		_, cmd := m.sidebarJumpToTop()
+		return cmd
 	case stateList:
 		if len(m.messages) == 0 {
 			return nil
@@ -798,11 +1033,8 @@ func (m *Model) jumpToTop() tea.Cmd {
 func (m *Model) jumpToBottom() tea.Cmd {
 	switch m.state {
 	case stateSidebar:
-		if len(m.sidebarItems) == 0 {
-			return nil
-		}
-		m.sidebarCursor = len(m.sidebarItems) - 1
-		return m.fetchMessages()
+		_, cmd := m.sidebarJumpToBottom()
+		return cmd
 	case stateList:
 		if len(m.messages) == 0 {
 			return nil
@@ -866,7 +1098,7 @@ func (m Model) isTrashSelection() bool {
 	return selected != nil && selected.IsDeleted
 }
 
-func (m Model) selectedDraft() (*models.MessageDTO, bool) {
+func (m Model) selectedDraft() (*models.Message, bool) {
 	if m.state < stateList || len(m.messages) == 0 || m.listCursor >= len(m.messages) {
 		return nil, false
 	}
@@ -875,7 +1107,7 @@ func (m Model) selectedDraft() (*models.MessageDTO, bool) {
 		return nil, false
 	}
 
-	clone := &models.MessageDTO{
+	clone := &models.Message{
 		ID:        selected.ID,
 		AccountID: selected.AccountID,
 		From:      selected.From,
@@ -953,7 +1185,7 @@ func (m *Model) clearStatus() {
 }
 
 //nolint:nestif // draft persistence has two explicit branches: create and update.
-func (m *Model) persistActiveDraft(ctx context.Context) (*models.MessageDTO, error) {
+func (m *Model) persistActiveDraft(ctx context.Context) (*models.Message, error) {
 	if m.activeDraft == nil {
 		return nil, errors.New("active draft is nil")
 	}
@@ -1159,13 +1391,13 @@ func (m *Model) applySearchFilter() {
 	selectedID := m.currentMessageID()
 	query := strings.ToLower(strings.TrimSpace(m.searchQuery))
 	if query == "" {
-		m.messages = append([]*models.MessageDTO{}, m.allMessages...)
+		m.messages = append([]*models.Message{}, m.allMessages...)
 		m.restoreListCursor(selectedID)
 		m.syncContentViewport(true)
 		return
 	}
 
-	filtered := make([]*models.MessageDTO, 0, len(m.allMessages))
+	filtered := make([]*models.Message, 0, len(m.allMessages))
 	for _, msg := range m.allMessages {
 		if msg == nil {
 			continue
@@ -1182,6 +1414,7 @@ func (m *Model) applySearchFilter() {
 func (m *Model) openSearchPrompt() {
 	m.commandActive = false
 	m.searchActive = true
+	m.searchDebouncing = false
 	m.pendingMotion = ""
 	m.searchInput.Prompt = "/ "
 	m.searchInput.Placeholder = "subject, sender, body"
@@ -1237,18 +1470,23 @@ func (m *Model) restoreListCursor(selectedID string) {
 	}
 }
 
-func (m *Model) clearSearch() {
+func (m *Model) clearSearch() tea.Cmd {
 	m.searchActive = false
 	m.commandActive = false
 	m.searchQuery = ""
+	m.searchDebouncing = false
+	m.searchToken++
 	m.searchInput.Prompt = "/ "
 	m.searchInput.Placeholder = "subject, sender, body"
 	m.applySearchInputStyles(false)
 	m.searchInput.SetValue("")
 	m.searchInput.Blur()
-	m.messages = append([]*models.MessageDTO{}, m.allMessages...)
-	m.restoreListCursor("")
+	m.prepareFreshMessageFetch()
+	m.messages = nil
+	m.allMessages = nil
+	m.listCursor = 0
 	m.syncContentViewport(true)
+	return m.fetchMessages()
 }
 
 func (m Model) executeCommandPrompt() (tea.Model, tea.Cmd) {
@@ -1263,7 +1501,7 @@ func (m Model) executeCommandPrompt() (tea.Model, tea.Cmd) {
 	case "q", "quit":
 		return m, tea.Quit
 	case "c", "compose":
-		m.enterComposeState(&models.MessageDTO{AccountID: m.defaultAcctID, From: m.defaultFrom, Subject: "", To: []string{}, Body: ""}, 0)
+		m.enterComposeState(&models.Message{AccountID: m.defaultAcctID, From: m.defaultFrom, Subject: "", To: []string{}, Body: ""}, 0)
 		m.setComposeContext("Composer", "Write now, save when ready.")
 		m.composeEditing = false
 		m.clearStatus()
@@ -1373,14 +1611,14 @@ func titleCaseASCII(value string) string {
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
-func (m *Model) armUndo(snapshot *models.MessageDTO, action string) {
+func (m *Model) armUndo(snapshot *models.Message, action string) {
 	if snapshot == nil {
 		return
 	}
 	m.undoToken++
 	token := m.undoToken
 	m.pendingUndo = &undoState{
-		message:   cloneMessageDTO(snapshot),
+		message:   cloneMessage(snapshot),
 		action:    action,
 		token:     token,
 		expiresAt: time.Now().Add(8 * time.Second),
@@ -1425,11 +1663,11 @@ func (m *Model) applyLoadedCursor(targetCursor int, targetID string) {
 	m.listCursor = 0
 }
 
-func cloneMessageDTO(message *models.MessageDTO) *models.MessageDTO {
+func cloneMessage(message *models.Message) *models.Message {
 	if message == nil {
 		return nil
 	}
-	return &models.MessageDTO{
+	return &models.Message{
 		ID:        message.ID,
 		AccountID: message.AccountID,
 		Subject:   message.Subject,
@@ -1455,7 +1693,7 @@ func (m Model) searchStatusMessage() string {
 	return fmt.Sprintf("Search: %d of %d messages • n/N next/prev", len(m.messages), len(m.allMessages))
 }
 
-func messageMatchesSearch(msg *models.MessageDTO, query string) bool {
+func messageMatchesSearch(msg *models.Message, query string) bool {
 	fields := []string{
 		msg.Subject,
 		msg.From,

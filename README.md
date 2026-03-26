@@ -150,6 +150,14 @@ filters:
   text/html: "w3m -T text/html -dump"
   # Optional plain text post-processing
   # text/plain: "sed -e 's/\\r$//'"
+
+tui:
+  # Messages fetched per page in the interactive list and search results.
+  list_page_size: 30
+  # How close the cursor gets to the bottom before the next page is fetched.
+  list_prefetch_ahead: 5
+  # Spinner frame interval for loading indicators, in milliseconds.
+  loading_tick_ms: 120
 ```
 
 If `username` is omitted, Postero uses `email` as the login.
@@ -170,6 +178,14 @@ Environment variable fallbacks:
 - `POSTERO_<ACCOUNT_NAME>_SMTP_PASSWORD`, for example `POSTERO_OUTLOOK_SMTP_PASSWORD`
 - `POSTERO_IMAP_PASSWORD` and `POSTERO_SMTP_PASSWORD` as protocol-wide fallbacks
 - `POSTERO_<ACCOUNT_NAME>_PASSWORD` or `POSTERO_PASSWORD` as shared fallbacks for both protocols
+
+The same env override convention applies to TUI settings. Examples:
+
+- `POSTERO_TUI_LIST_PAGE_SIZE=50`
+- `POSTERO_TUI_LIST_PREFETCH_AHEAD=8`
+- `POSTERO_TUI_LOADING_TICK_MS=90`
+
+These override the corresponding YAML keys under `tui:`.
 
 If `imap.username` or `smtp.username` is omitted, Postero falls back to `username`, then to `email`.
 

@@ -9,6 +9,7 @@ import (
 
 func renderHeader(m Model, width int) string {
 	style := m.styles.Header.Width(width)
+
 	appTitleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Highlight)
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(m.styles.Palette.Text)
 	pillStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text).Background(m.styles.Palette.Faint).Padding(0, 1)
@@ -38,12 +39,7 @@ func renderHeader(m Model, width int) string {
 		)
 	}
 	if strings.TrimSpace(m.searchQuery) != "" || m.searchActive {
-		searchLabel := searchDisplayValue(m)
-		if m.searchActive {
-			searchLabel += "  •  live filter"
-		} else {
-			searchLabel += "  •  filtered"
-		}
+		searchLabel := backendSearchModeLabel(m)
 		left = lipgloss.JoinVertical(
 			lipgloss.Left,
 			left,
@@ -56,22 +52,24 @@ func renderHeader(m Model, width int) string {
 		)
 	}
 
-	actions := []string{primaryPillStyle.Render("c Compose")}
+	coreActions := []string{primaryPillStyle.Render("c Compose")}
 	searchPill := mutedPillStyle.Render("/ Search")
 	if m.searchActive || strings.TrimSpace(m.searchQuery) != "" {
 		searchPill = pillStyle.Render("/ Search")
 	}
-	actions = append(actions, searchPill)
+	coreActions = append(coreActions, searchPill)
 	commandPill := mutedPillStyle.Render(": Cmd")
 	if m.commandActive {
 		commandPill = pillStyle.Render(": Cmd")
 	}
-	actions = append(actions, commandPill)
+	coreActions = append(coreActions, commandPill)
 	if m.pendingUndo != nil {
-		actions = append(actions, pillStyle.Render("u Undo"))
+		coreActions = append(coreActions, pillStyle.Render("u Undo"))
 	}
+
+	messageActions := []string{}
 	if hasSelection {
-		actions = append(actions,
+		messageActions = append(messageActions,
 			pillStyle.Render("r Reply"),
 			pillStyle.Render("R All"),
 			pillStyle.Render("f Forward"),
@@ -81,11 +79,73 @@ func renderHeader(m Model, width int) string {
 		)
 	}
 	if hasDraftSelection {
-		actions = append(actions, pillStyle.Render("Enter Edit Draft"))
+		messageActions = append(messageActions, pillStyle.Render("Enter Edit Draft"))
 	}
-	right := lipgloss.JoinHorizontal(lipgloss.Left, actions...)
+	actions := append(coreActions, messageActions...)
+	actionWidth := max(width-lipgloss.Width(left)-4, 28)
+	right := renderBrowseHeaderActions(actionWidth, actions)
 	placed := joinHeaderColumns(width, left, right)
 	return style.Render(placed)
+}
+
+func renderBrowseHeaderActions(maxWidth int, groups ...[]string) string {
+	lines := make([]string, 0, len(groups))
+	for _, group := range groups {
+		wrapped := wrapHeaderPills(group, maxWidth)
+		if len(wrapped) == 0 {
+			continue
+		}
+		lines = append(lines, wrapped...)
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return lipgloss.JoinVertical(lipgloss.Right, lines...)
+}
+
+func wrapHeaderPills(pills []string, maxWidth int) []string {
+	if len(pills) == 0 {
+		return nil
+	}
+	if maxWidth < 1 {
+		maxWidth = 1
+	}
+	rows := make([]string, 0, 2)
+	current := make([]string, 0, len(pills))
+	currentWidth := 0
+	for _, pill := range pills {
+		pillWidth := lipgloss.Width(pill)
+		candidateWidth := pillWidth
+		if len(current) > 0 {
+			candidateWidth = currentWidth + 1 + pillWidth
+		}
+		if len(current) > 0 && candidateWidth > maxWidth {
+			rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Left, interleaveHeaderPills(current)...))
+			current = []string{pill}
+			currentWidth = pillWidth
+			continue
+		}
+		current = append(current, pill)
+		currentWidth = candidateWidth
+	}
+	if len(current) > 0 {
+		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Left, interleaveHeaderPills(current)...))
+	}
+	return rows
+}
+
+func interleaveHeaderPills(pills []string) []string {
+	if len(pills) == 0 {
+		return nil
+	}
+	parts := make([]string, 0, len(pills)*2-1)
+	for index, pill := range pills {
+		if index > 0 {
+			parts = append(parts, " ")
+		}
+		parts = append(parts, pill)
+	}
+	return parts
 }
 
 func renderComposeHeader(m Model, width int, appTitleStyle, titleStyle lipgloss.Style) string {
@@ -293,6 +353,13 @@ func composeHeaderModeAction(m Model) string {
 }
 
 func currentMailboxTitle(m Model) string {
+	if tag := strings.TrimSpace(m.activeTagID); tag != "" {
+		title := strings.ReplaceAll(tag, "_", " ")
+		if scope := activeAccountScopeLabel(m); scope != "" {
+			return title + " • " + scope
+		}
+		return title
+	}
 	if m.sidebarCursor >= 0 && m.sidebarCursor < len(m.sidebarItems) {
 		rawItem := m.sidebarItems[m.sidebarCursor]
 		item := strings.TrimSpace(rawItem)
@@ -342,6 +409,20 @@ func searchDisplayValue(m Model) string {
 		return m.searchQuery
 	}
 	return "subject, sender, body"
+}
+
+func backendSearchModeLabel(m Model) string {
+	label := "backend search"
+	if m.searchDebouncing {
+		return label + "  •  waiting"
+	}
+	if m.messagesLoading {
+		return label + "  •  loading"
+	}
+	if m.searchActive {
+		return label + "  •  editing"
+	}
+	return label + "  •  active"
 }
 
 func joinHeaderColumns(width int, left, right string) string {

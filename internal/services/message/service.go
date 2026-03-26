@@ -24,41 +24,41 @@ func NewServiceWithSMTP(repository ports.MessageRepository, smtpFactory func(acc
 	return &Service{repository: repository, smtpFactory: smtpFactory}
 }
 
-func (s *Service) GetMessage(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *Service) GetMessage(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
-func (s *Service) ListMessages(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *Service) ListMessages(ctx context.Context, limit, offset int) ([]*models.Message, error) {
 	messages, err := s.repository.List(ctx, limit, offset)
 	if err != nil {
 		return nil, err
 	}
 
-	dtos := make([]*models.MessageDTO, len(messages))
+	result := make([]*models.Message, len(messages))
 	for i, msg := range messages {
-		dtos[i] = toMessageDTO(msg)
+		result[i] = cloneMessage(msg)
 	}
-	return dtos, nil
+	return result, nil
 }
 
-func (s *Service) SearchMessages(ctx context.Context, criteria models.SearchCriteria) ([]*models.MessageDTO, error) {
+func (s *Service) SearchMessages(ctx context.Context, criteria models.SearchCriteria) ([]*models.Message, error) {
 	messages, err := s.repository.Search(ctx, criteria)
 	if err != nil {
 		return nil, err
 	}
 
-	dtos := make([]*models.MessageDTO, len(messages))
+	result := make([]*models.Message, len(messages))
 	for i, msg := range messages {
-		dtos[i] = toMessageDTO(msg)
+		result[i] = cloneMessage(msg)
 	}
-	return dtos, nil
+	return result, nil
 }
 
-func (s *Service) ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.MessageDTO, error) {
+func (s *Service) ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.Message, error) {
 	msg := &models.Message{
 		AccountID: request.AccountID,
 		Subject:   request.Subject,
@@ -77,7 +77,7 @@ func (s *Service) ComposeMessage(ctx context.Context, request *models.CreateMess
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 func (s *Service) SendMessage(ctx context.Context, id string) error {
@@ -116,7 +116,7 @@ func (s *Service) DeleteMessage(ctx context.Context, id string) error {
 }
 
 // ReplyToMessage creates a reply draft.
-func (s *Service) ReplyToMessage(ctx context.Context, messageID string, body string) (*models.MessageDTO, error) {
+func (s *Service) ReplyToMessage(ctx context.Context, messageID string, body string) (*models.Message, error) {
 	original, err := s.repository.GetByID(ctx, messageID)
 	if err != nil {
 		return nil, err
@@ -142,11 +142,11 @@ func (s *Service) ReplyToMessage(ctx context.Context, messageID string, body str
 	if err := s.repository.Save(ctx, reply); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(reply), nil
+	return cloneMessage(reply), nil
 }
 
 // ForwardMessage creates a forward draft.
-func (s *Service) ForwardMessage(ctx context.Context, messageID string, to []string) (*models.MessageDTO, error) {
+func (s *Service) ForwardMessage(ctx context.Context, messageID string, to []string) (*models.Message, error) {
 	original, err := s.repository.GetByID(ctx, messageID)
 	if err != nil {
 		return nil, err
@@ -172,11 +172,11 @@ func (s *Service) ForwardMessage(ctx context.Context, messageID string, to []str
 	if err := s.repository.Save(ctx, forward); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(forward), nil
+	return cloneMessage(forward), nil
 }
 
 // GetAllInboxes retrieves inbox messages.
-func (s *Service) GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *Service) GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.Message, error) {
 	isDraft := false
 	isSpam := false
 	isDeleted := false
@@ -191,7 +191,7 @@ func (s *Service) GetAllInboxes(ctx context.Context, limit, offset int) ([]*mode
 }
 
 // GetFlagged retrieves starred messages.
-func (s *Service) GetFlagged(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *Service) GetFlagged(ctx context.Context, limit, offset int) ([]*models.Message, error) {
 	isStarred := true
 	return s.SearchMessages(ctx, models.SearchCriteria{
 		IsStarred: &isStarred,
@@ -201,7 +201,7 @@ func (s *Service) GetFlagged(ctx context.Context, limit, offset int) ([]*models.
 }
 
 // GetDrafts retrieves draft messages.
-func (s *Service) GetDrafts(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *Service) GetDrafts(ctx context.Context, limit, offset int) ([]*models.Message, error) {
 	isDraft := true
 	isDeleted := false
 	return s.SearchMessages(ctx, models.SearchCriteria{
@@ -213,7 +213,7 @@ func (s *Service) GetDrafts(ctx context.Context, limit, offset int) ([]*models.M
 }
 
 // GetSent retrieves sent messages.
-func (s *Service) GetSent(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *Service) GetSent(ctx context.Context, limit, offset int) ([]*models.Message, error) {
 	isDeleted := false
 	return s.SearchMessages(ctx, models.SearchCriteria{
 		Labels:    []string{"sent"},
@@ -224,7 +224,7 @@ func (s *Service) GetSent(ctx context.Context, limit, offset int) ([]*models.Mes
 }
 
 // GetByLabel retrieves messages by label.
-func (s *Service) GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.MessageDTO, error) {
+func (s *Service) GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.Message, error) {
 	isDeleted := false
 	return s.SearchMessages(ctx, models.SearchCriteria{
 		Labels:    []string{label},
@@ -235,7 +235,7 @@ func (s *Service) GetByLabel(ctx context.Context, label string, limit, offset in
 }
 
 // UpdateDraft updates a draft message.
-func (s *Service) UpdateDraft(ctx context.Context, id string, request *models.UpdateMessageRequest) (*models.MessageDTO, error) {
+func (s *Service) UpdateDraft(ctx context.Context, id string, request *models.UpdateMessageRequest) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -270,11 +270,11 @@ func (s *Service) UpdateDraft(ctx context.Context, id string, request *models.Up
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 // ReplyAllToMessage creates a reply-all draft.
-func (s *Service) ReplyAllToMessage(ctx context.Context, originalID string, body string) (*models.MessageDTO, error) {
+func (s *Service) ReplyAllToMessage(ctx context.Context, originalID string, body string) (*models.Message, error) {
 	original, err := s.repository.GetByID(ctx, originalID)
 	if err != nil {
 		return nil, err
@@ -300,11 +300,11 @@ func (s *Service) ReplyAllToMessage(ctx context.Context, originalID string, body
 	if err := s.repository.Save(ctx, reply); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(reply), nil
+	return cloneMessage(reply), nil
 }
 
 // ToggleStar toggles the starred status.
-func (s *Service) ToggleStar(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *Service) ToggleStar(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -316,11 +316,11 @@ func (s *Service) ToggleStar(ctx context.Context, id string) (*models.MessageDTO
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 // MarkAsRead marks a message as read.
-func (s *Service) MarkAsRead(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *Service) MarkAsRead(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -329,18 +329,18 @@ func (s *Service) MarkAsRead(ctx context.Context, id string) (*models.MessageDTO
 		return nil, coreerrors.MessageNotFound(id)
 	}
 	if msg.IsRead {
-		return toMessageDTO(msg), nil
+		return cloneMessage(msg), nil
 	}
 	msg.IsRead = true
 	msg.Flags.Seen = true
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 // ToggleDelete toggles the deleted status.
-func (s *Service) ToggleDelete(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *Service) ToggleDelete(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -352,11 +352,11 @@ func (s *Service) ToggleDelete(ctx context.Context, id string) (*models.MessageD
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 // ArchiveMessage removes a message from inbox and marks it as archived.
-func (s *Service) ArchiveMessage(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *Service) ArchiveMessage(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -371,11 +371,11 @@ func (s *Service) ArchiveMessage(ctx context.Context, id string) (*models.Messag
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 // MarkAsSpam marks a message as spam and removes it from inbox.
-func (s *Service) MarkAsSpam(ctx context.Context, id string) (*models.MessageDTO, error) {
+func (s *Service) MarkAsSpam(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -390,51 +390,32 @@ func (s *Service) MarkAsSpam(ctx context.Context, id string) (*models.MessageDTO
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
 // RestoreMessage restores a message snapshot after an undo operation.
-func (s *Service) RestoreMessage(ctx context.Context, snapshot *models.MessageDTO) (*models.MessageDTO, error) {
+func (s *Service) RestoreMessage(ctx context.Context, snapshot *models.Message) (*models.Message, error) {
 	if snapshot == nil {
 		return nil, coreerrors.SnapshotNil()
 	}
 
-	message := &models.Message{
-		ID:        snapshot.ID,
-		AccountID: snapshot.AccountID,
-		Subject:   snapshot.Subject,
-		From:      snapshot.From,
-		To:        append([]string{}, snapshot.To...),
-		Cc:        append([]string{}, snapshot.Cc...),
-		Bcc:       append([]string{}, snapshot.Bcc...),
-		Body:      snapshot.Body,
-		HTML:      snapshot.HTML,
-		Date:      snapshot.Date,
-		Labels:    append([]string{}, snapshot.Labels...),
-		ThreadID:  snapshot.ThreadID,
-		IsRead:    snapshot.IsRead,
-		IsSpam:    snapshot.IsSpam,
-		IsDraft:   snapshot.IsDraft,
-		IsStarred: snapshot.IsStarred,
-		IsDeleted: snapshot.IsDeleted,
-		Size:      snapshot.Size,
-		Flags: models.MessageFlags{
-			Seen:    snapshot.IsRead,
-			Flagged: snapshot.IsStarred,
-			Draft:   snapshot.IsDraft,
-			Deleted: snapshot.IsDeleted,
-			Junk:    snapshot.IsSpam,
-		},
+	message := cloneMessage(snapshot)
+	message.Flags = models.MessageFlags{
+		Seen:    snapshot.IsRead,
+		Flagged: snapshot.IsStarred,
+		Draft:   snapshot.IsDraft,
+		Deleted: snapshot.IsDeleted,
+		Junk:    snapshot.IsSpam,
 	}
 
 	if err := s.repository.Save(ctx, message); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(message), nil
+	return cloneMessage(message), nil
 }
 
 // AddLabel adds a label to a message.
-func (s *Service) AddLabel(ctx context.Context, id, label string) (*models.MessageDTO, error) {
+func (s *Service) AddLabel(ctx context.Context, id, label string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -446,44 +427,48 @@ func (s *Service) AddLabel(ctx context.Context, id, label string) (*models.Messa
 	if err := s.repository.Save(ctx, msg); err != nil {
 		return nil, err
 	}
-	return toMessageDTO(msg), nil
+	return cloneMessage(msg), nil
 }
 
-func toMessageDTO(msg *models.Message) *models.MessageDTO {
+func cloneMessage(msg *models.Message) *models.Message {
 	if msg == nil {
 		return nil
 	}
 
-	result := &models.MessageDTO{
+	result := &models.Message{
 		ID:        msg.ID,
 		AccountID: msg.AccountID,
 		Subject:   msg.Subject,
 		From:      msg.From,
 		To:        append([]string{}, msg.To...),
-		Cc:        msg.Cc,
-		Bcc:       msg.Bcc,
+		Cc:        append([]string{}, msg.Cc...),
+		Bcc:       append([]string{}, msg.Bcc...),
 		Body:      msg.Body,
 		HTML:      msg.HTML,
 		Date:      msg.Date,
+		Flags:     msg.Flags,
+		Labels:    append([]string{}, msg.Labels...),
+		ThreadID:  msg.ThreadID,
 		IsRead:    msg.IsRead,
 		IsSpam:    msg.IsSpam,
 		IsDraft:   msg.IsDraft,
 		IsStarred: msg.IsStarred,
 		IsDeleted: msg.IsDeleted,
-		Labels:    msg.Labels,
-		ThreadID:  msg.ThreadID,
 		Size:      msg.Size,
 	}
 
 	if len(msg.Attachments) > 0 {
+		result.Attachments = make([]*models.Attachment, 0, len(msg.Attachments))
 		for _, att := range msg.Attachments {
-			dtoAtt := models.AttachmentDTO{
+			if att == nil {
+				continue
+			}
+			result.Attachments = append(result.Attachments, &models.Attachment{
 				Filename: att.Filename,
 				Size:     att.Size,
 				MimeType: att.MimeType,
-				Data:     att.Data,
-			}
-			result.Attachments = append(result.Attachments, dtoAtt)
+				Data:     append([]byte{}, att.Data...),
+			})
 		}
 	}
 

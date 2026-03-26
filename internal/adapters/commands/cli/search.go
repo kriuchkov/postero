@@ -22,26 +22,9 @@ var searchCmd = &cobra.Command{
 			return err
 		}
 
-		queries := []models.SearchCriteria{
-			{Subject: query, Limit: 50},
-			{From: query, Limit: 50},
-			{Body: query, Limit: 50},
-		}
-
-		seen := make(map[string]struct{})
-		messages := make([]*models.MessageDTO, 0)
-		for _, criteria := range queries {
-			results, err := service.SearchMessages(context.Background(), criteria)
-			if err != nil {
-				return errors.Wrap(err, "search failed")
-			}
-			for _, msg := range results {
-				if _, exists := seen[msg.ID]; exists {
-					continue
-				}
-				seen[msg.ID] = struct{}{}
-				messages = append(messages, msg)
-			}
+		messages, err := service.SearchMessages(context.Background(), models.SearchCriteria{Query: query, Limit: 50})
+		if err != nil {
+			return errors.Wrap(err, "search failed")
 		}
 
 		if len(messages) == 0 {

@@ -33,16 +33,16 @@ type MessageRepository interface {
 // MessageService defines the interface for message business logic
 type MessageService interface {
 	// GetMessage retrieves a message by ID
-	GetMessage(ctx context.Context, id string) (*models.MessageDTO, error)
+	GetMessage(ctx context.Context, id string) (*models.Message, error)
 
 	// ListMessages retrieves a list of messages
-	ListMessages(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error)
+	ListMessages(ctx context.Context, limit, offset int) ([]*models.Message, error)
 
 	// SearchMessages searches for messages
-	SearchMessages(ctx context.Context, criteria models.SearchCriteria) ([]*models.MessageDTO, error)
+	SearchMessages(ctx context.Context, criteria models.SearchCriteria) ([]*models.Message, error)
 
 	// ComposeMessage creates a new message draft
-	ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.MessageDTO, error)
+	ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.Message, error)
 
 	// SendMessage sends a message
 	SendMessage(ctx context.Context, id string) error
@@ -51,28 +51,28 @@ type MessageService interface {
 	DeleteMessage(ctx context.Context, id string) error
 
 	// ReplyToMessage creates a reply to a message
-	ReplyToMessage(ctx context.Context, messageID string, body string) (*models.MessageDTO, error)
+	ReplyToMessage(ctx context.Context, messageID string, body string) (*models.Message, error)
 
 	// ForwardMessage forwards a message
-	ForwardMessage(ctx context.Context, messageID string, to []string) (*models.MessageDTO, error)
+	ForwardMessage(ctx context.Context, messageID string, to []string) (*models.Message, error)
 
 	// New required methods
-	GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error)
-	GetFlagged(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error)
-	GetDrafts(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error)
-	GetSent(ctx context.Context, limit, offset int) ([]*models.MessageDTO, error)
-	GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.MessageDTO, error)
+	GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.Message, error)
+	GetFlagged(ctx context.Context, limit, offset int) ([]*models.Message, error)
+	GetDrafts(ctx context.Context, limit, offset int) ([]*models.Message, error)
+	GetSent(ctx context.Context, limit, offset int) ([]*models.Message, error)
+	GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.Message, error)
 
-	ReplyAllToMessage(ctx context.Context, originalID string, body string) (*models.MessageDTO, error)
-	UpdateDraft(ctx context.Context, id string, request *models.UpdateMessageRequest) (*models.MessageDTO, error)
+	ReplyAllToMessage(ctx context.Context, originalID string, body string) (*models.Message, error)
+	UpdateDraft(ctx context.Context, id string, request *models.UpdateMessageRequest) (*models.Message, error)
 
-	ToggleStar(ctx context.Context, id string) (*models.MessageDTO, error)
-	MarkAsRead(ctx context.Context, id string) (*models.MessageDTO, error)
-	ToggleDelete(ctx context.Context, id string) (*models.MessageDTO, error)
-	ArchiveMessage(ctx context.Context, id string) (*models.MessageDTO, error)
-	MarkAsSpam(ctx context.Context, id string) (*models.MessageDTO, error)
-	RestoreMessage(ctx context.Context, snapshot *models.MessageDTO) (*models.MessageDTO, error)
-	AddLabel(ctx context.Context, id, label string) (*models.MessageDTO, error)
+	ToggleStar(ctx context.Context, id string) (*models.Message, error)
+	MarkAsRead(ctx context.Context, id string) (*models.Message, error)
+	ToggleDelete(ctx context.Context, id string) (*models.Message, error)
+	ArchiveMessage(ctx context.Context, id string) (*models.Message, error)
+	MarkAsSpam(ctx context.Context, id string) (*models.Message, error)
+	RestoreMessage(ctx context.Context, snapshot *models.Message) (*models.Message, error)
+	AddLabel(ctx context.Context, id, label string) (*models.Message, error)
 }
 
 // IMAPRepository defines the interface for IMAP operations
