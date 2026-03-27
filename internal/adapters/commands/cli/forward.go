@@ -6,10 +6,11 @@ import (
 	"strings"
 
 	"github.com/go-faster/errors"
+	"github.com/spf13/cobra"
+
 	appcore "github.com/kriuchkov/postero/internal/app"
 	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
 	"github.com/kriuchkov/postero/internal/core/models"
-	"github.com/spf13/cobra"
 )
 
 var (

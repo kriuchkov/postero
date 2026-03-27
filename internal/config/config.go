@@ -38,12 +38,35 @@ type providerPreset struct {
 type Config struct {
 	Accounts    []AccountConfig   `mapstructure:"accounts"     yaml:"accounts,omitempty"`
 	Storage     StorageConfig     `mapstructure:"storage"      yaml:"storage,omitempty"`
+	AI          AIConfig          `mapstructure:"ai"           yaml:"ai,omitempty"`
 	Theme       ThemeConfig       `mapstructure:"theme"        yaml:"theme,omitempty"`
 	TUI         TUIConfig         `mapstructure:"tui"          yaml:"tui,omitempty"`
 	Keybindings KeybindingsConfig `mapstructure:"keybindings"  yaml:"keybindings,omitempty"`
 	Filters     map[string]string `mapstructure:"filters"      yaml:"filters,omitempty"`
 	DataPath    string            `mapstructure:"data_path"    yaml:"data_path,omitempty"`
 	CustomFlags []string          `mapstructure:"custom_flags" yaml:"custom_flags,omitempty"`
+}
+
+type AIConfig struct {
+	DefaultComposeTemplate string                      `mapstructure:"default_compose_template" yaml:"default_compose_template,omitempty"`
+	DefaultReplyTemplate   string                      `mapstructure:"default_reply_template"   yaml:"default_reply_template,omitempty"`
+	Providers              map[string]AIProviderConfig `mapstructure:"providers"                yaml:"providers,omitempty"`
+	Templates              map[string]AITemplateConfig `mapstructure:"templates"                yaml:"templates,omitempty"`
+}
+
+type AIProviderConfig struct {
+	Type    string `mapstructure:"type"     yaml:"type,omitempty"`
+	APIKey  string `mapstructure:"api_key"  yaml:"api_key,omitempty"`
+	BaseURL string `mapstructure:"base_url" yaml:"base_url,omitempty"`
+	Model   string `mapstructure:"model"    yaml:"model,omitempty"`
+}
+
+type AITemplateConfig struct {
+	Mode         string  `mapstructure:"mode"          yaml:"mode,omitempty"`
+	Provider     string  `mapstructure:"provider"      yaml:"provider,omitempty"`
+	SystemPrompt string  `mapstructure:"system_prompt" yaml:"system_prompt,omitempty"`
+	Prompt       string  `mapstructure:"prompt"        yaml:"prompt,omitempty"`
+	Temperature  float64 `mapstructure:"temperature"   yaml:"temperature,omitempty"`
 }
 
 type StorageConfig struct {
@@ -186,6 +209,7 @@ func decodeConfig(v *viper.Viper) (*Config, error) {
 }
 
 func applyConfigDefaults(cfg *Config) {
+	applyAIDefaults(&cfg.AI)
 	for index := range cfg.Accounts {
 		applyAccountDefaults(&cfg.Accounts[index])
 	}
@@ -240,6 +264,29 @@ func applyAccountDefaults(account *AccountConfig) {
 	}
 	if account.Password == "" {
 		account.Password = resolvePassword(account, "")
+	}
+}
+
+func applyAIDefaults(cfg *AIConfig) {
+	if cfg == nil {
+		return
+	}
+
+	for name, provider := range cfg.Providers {
+		if provider.Type == "" {
+			provider.Type = strings.ToLower(strings.TrimSpace(name))
+		}
+		switch strings.ToLower(strings.TrimSpace(provider.Type)) {
+		case "openai":
+			if provider.BaseURL == "" {
+				provider.BaseURL = "https://api.openai.com/v1"
+			}
+		case "gemini":
+			if provider.BaseURL == "" {
+				provider.BaseURL = "https://generativelanguage.googleapis.com/v1beta"
+			}
+		}
+		cfg.Providers[name] = provider
 	}
 }
 

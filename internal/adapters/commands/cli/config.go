@@ -6,10 +6,11 @@ import (
 	"strings"
 
 	"github.com/go-faster/errors"
-	appcore "github.com/kriuchkov/postero/internal/app"
-	appconfig "github.com/kriuchkov/postero/internal/config"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+
+	appcore "github.com/kriuchkov/postero/internal/app"
+	appconfig "github.com/kriuchkov/postero/internal/config"
 )
 
 var (

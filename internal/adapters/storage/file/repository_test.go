@@ -5,10 +5,11 @@ import (
 	"testing"
 	"time"
 
-	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
-	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
+	"github.com/kriuchkov/postero/internal/core/models"
 )
 
 func TestNewRepository(t *testing.T) {

@@ -6,15 +6,17 @@ import (
 	"strings"
 
 	"github.com/go-faster/errors"
+	"github.com/spf13/cobra"
+
 	appcore "github.com/kriuchkov/postero/internal/app"
 	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
 	"github.com/kriuchkov/postero/internal/core/models"
-	"github.com/spf13/cobra"
 )
 
 var (
 	replyAccount string
 	replyBody    string
+	replyAll     bool
 	replySend    bool
 )
 
@@ -30,7 +32,12 @@ var replyCmd = &cobra.Command{
 			return err
 		}
 
-		draft, err := service.ReplyToMessage(context.Background(), id, replyBody)
+		var draft *models.Message
+		if replyAll {
+			draft, err = service.ReplyAllToMessage(context.Background(), id, replyBody)
+		} else {
+			draft, err = service.ReplyToMessage(context.Background(), id, replyBody)
+		}
 		if err != nil {
 			return errors.Wrap(err, "reply to message")
 		}
@@ -52,10 +59,18 @@ var replyCmd = &cobra.Command{
 			if err := service.SendMessage(context.Background(), draft.ID); err != nil {
 				return errors.Wrap(err, "send reply")
 			}
-			fmt.Printf("Sent reply %s to %s\n", draft.ID, strings.Join(draft.To, ", "))
+			mode := "reply"
+			if replyAll {
+				mode = "reply-all"
+			}
+			fmt.Printf("Sent %s %s to %s\n", mode, draft.ID, strings.Join(draft.To, ", "))
 			return nil
 		}
 
+		if replyAll {
+			fmt.Printf("Saved reply-all draft %s\n", draft.ID)
+			return nil
+		}
 		fmt.Printf("Saved reply draft %s\n", draft.ID)
 		return nil
 	},
@@ -64,5 +79,6 @@ var replyCmd = &cobra.Command{
 func init() {
 	replyCmd.Flags().StringVar(&replyAccount, "account", "", "account name or email to send from")
 	replyCmd.Flags().StringVar(&replyBody, "body", "", "reply body")
+	replyCmd.Flags().BoolVar(&replyAll, "all", false, "reply to all recipients")
 	replyCmd.Flags().BoolVar(&replySend, "send", false, "send reply immediately")
 }

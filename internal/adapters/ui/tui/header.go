@@ -63,8 +63,14 @@ func renderHeader(m Model, width int) string {
 		commandPill = pillStyle.Render(": Cmd")
 	}
 	coreActions = append(coreActions, commandPill)
+	if badge := headerAILoadingBadge(m); badge != "" {
+		coreActions = append(coreActions, badge)
+	}
 	if m.pendingUndo != nil {
 		coreActions = append(coreActions, pillStyle.Render("u Undo"))
+	}
+	if m.lastAction != repeatableActionNone && hasSelection {
+		coreActions = append(coreActions, pillStyle.Render(". Repeat"))
 	}
 
 	messageActions := []string{}
@@ -158,8 +164,29 @@ func renderComposeHeader(m Model, width int, appTitleStyle, titleStyle lipgloss.
 		appTitleStyle.Render("Postero"),
 		titleStyle.Render(composeTitle+"  •  "+m.composeAccountLabel()),
 	)
-	right := lipgloss.JoinHorizontal(lipgloss.Left, composeHeaderActions(m, width)...)
+	actions := composeHeaderActions(m, width)
+	if badge := headerAILoadingBadge(m); badge != "" {
+		actions = append(actions, lipgloss.NewStyle().MarginLeft(1).Render(badge))
+	}
+	right := lipgloss.JoinHorizontal(lipgloss.Left, actions...)
 	return joinHeaderColumns(width, left, right)
+}
+
+func headerAILoadingBadge(m Model) string {
+	if !m.aiGenerating {
+		return ""
+	}
+	label := strings.TrimSpace(m.aiLoadingLabel)
+	if label == "" {
+		label = "AI"
+	}
+	frame := loadingFrames[m.aiLoadingFrame%len(loadingFrames)]
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.styles.Palette.Highlight).
+		Background(m.styles.Palette.Primary).
+		Padding(0, 1).
+		Render(frame + " " + label)
 }
 
 type composeHeaderContext struct {

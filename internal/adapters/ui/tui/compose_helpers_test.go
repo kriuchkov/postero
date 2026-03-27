@@ -4,9 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/kriuchkov/postero/internal/core/models"
 )
 
 func TestComposeAccountLabelFallsBackToSender(t *testing.T) {
@@ -26,7 +27,11 @@ func TestSelectedMessageReturnsFalseWithoutValidSelection(t *testing.T) {
 }
 
 func TestTrimRecipientsDropsEmptyValues(t *testing.T) {
-	assert.Equal(t, []string{"one@example.com", "two@example.com"}, trimRecipients([]string{" one@example.com ", "", "   ", "two@example.com"}))
+	assert.Equal(
+		t,
+		[]string{"one@example.com", "two@example.com"},
+		trimRecipients([]string{" one@example.com ", "", "   ", "two@example.com"}),
+	)
 }
 
 func TestPersistActiveDraftCreatesDraftWithFallbackSender(t *testing.T) {

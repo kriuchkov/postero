@@ -65,6 +65,13 @@ Compose new email:
 pstr compose
 ```
 
+Generate a compose or reply draft with AI using configured templates:
+
+```bash
+pstr compose ai --account Gmail --to user@example.com --instruction "Draft a short project kickoff email"
+pstr reply ai msg-001 --template reply-default --instruction "Politely accept and ask for the agenda" --all
+```
+
 ## Navigation
 
 The TUI is keyboard-first and now supports vim-style movement across the sidebar, message list, reader pane, and composer.
@@ -73,6 +80,7 @@ The TUI is keyboard-first and now supports vim-style movement across the sidebar
 
 - `h` / `l` or `←` / `→` - Move focus between sidebar, message list, and reader pane
 - `j` / `k` or `↓` / `↑` - Move within the active pane
+- Prefix motions with counts such as `5j`, `3gg`, or `2G` to move multiple rows or jump to a specific visible item
 - `gg` or `Home` - Jump to the top of the active pane
 - `G` or `End` - Jump to the bottom of the active pane
 - `0` - Jump to the start of the active pane
@@ -95,8 +103,17 @@ The TUI is keyboard-first and now supports vim-style movement across the sidebar
 - `d` - Move to trash, or permanently delete in Trash
 - `a` - Archive
 - `!` - Mark as spam
+- `.` - Repeat the last archive, trash, spam, or permanent delete action on the current selection
 - `u` - Undo the last delete, archive, or spam action while the undo window is active
 - `s` - Save attachments from the selected message to `~/Downloads`
+
+### Command Mode
+
+- `:` - Open the command palette
+- Supported commands: `compose`, `compose-ai`, `reply-ai`, `reply-all-ai`, `inbox`, `sent`, `drafts`, `archive`, `trash`, `spam`, `refresh`, `help`, `quit`
+- AI commands open the normal composer with generated content, for example `:compose-ai Draft a short kickoff email`, `:compose-ai --template compose-default Draft a short kickoff email`, or `:reply-ai --template reply-default Politely accept and confirm`
+- While AI generation is in flight, the header and footer show a dedicated loading badge so network-backed draft generation is visible
+- While a compose draft has unsaved changes, commands that would abandon it are blocked until you save, send, or cancel it
 
 ### Compose Mode
 
@@ -104,8 +121,10 @@ Compose has a normal mode for navigation and a writing mode for text entry.
 
 - `j` / `k` - Move between Account, To, Subject, and Body while in normal mode
 - `h` / `l` or `←` / `→` on the Account field - Switch the sending account
+- Counts also work in compose normal mode, for example `2j`, `3gg`, or `G`
 - `gg`, `G`, `0`, `$` - Jump to the first or last compose field
 - `i` or `Enter` - Enter writing mode for the selected field
+- `:` - Open the command palette from compose, including AI drafting commands such as `compose-ai --template compose-default ...`
 - `Esc` - Leave writing mode; press `Esc` again to cancel compose
 - `Ctrl+o` - Save draft
 - `Ctrl+x` - Send message
@@ -211,10 +230,17 @@ pstr auth delete personal
 - `pstr` - Launch the interactive terminal UI
 - `sync` - Synchronize emails with IMAP server
 - `search` - Search emails by subject, sender, or content
+- `show` - Print one message with headers, labels, attachments, and body
 - `compose` - Create and send new email
 - `reply` - Reply to selected email
 - `forward` - Forward email
 - `list` - Print a mailbox snapshot to stdout
+- `read` - Mark a message as read
+- `star` - Toggle the starred state of a message
+- `archive` - Move a message out of Inbox into Archive
+- `trash` - Mark a message as trashed without deleting it permanently
+- `delete` - Permanently remove a message from the local store
+- `spam` - Mark a message as spam
 
 `auth` subcommands manage saved credentials and OAuth2 logins:
 
@@ -230,12 +256,25 @@ pstr auth delete personal
 
 `compose`, `reply`, `forward`, and `sync` support `--account` so you can explicitly choose the configured account by name or email.
 
+`compose ai` and `reply ai` use `ai.providers` and `ai.templates` from the config file. Templates are rendered with compose/reply context and must return JSON with `subject` and `body`. Use `--instruction` for the high-level request and `--var key=value` for extra template data.
+
+`list` supports mailbox and output filters such as `--mailbox`, `--label`, `--limit`, and `--format`. `search` supports `--account`, `--label`, `--limit`, `--unread`, and `--format` for scripting-friendly usage.
+
+Message action commands such as `read`, `star`, `archive`, `trash`, `spam`, and `delete` accept multiple IDs and can read IDs from stdin with `--stdin-ids` for shell pipelines. `trash` is reversible mailbox state, while `delete` permanently removes messages from the local store.
+
 Examples:
 
 ```bash
 pstr sync --account Outlook
-pstr compose --account Gmail --to user@example.com --subject "Hello"
-pstr reply msg-001 --account Gmail --send
+pstr list --mailbox archive --limit 10
+pstr search invoice --account Gmail --unread
+pstr show msg-001
+pstr compose --account Gmail --to user@example.com --subject "Hello" --attach ./invoice.pdf
+pstr reply msg-001 --account Gmail --all --send
+pstr trash msg-001 msg-002
+pstr search invoice --format json | jq -r '.[].id' | pstr archive --stdin-ids
+pstr delete msg-999
+pstr archive msg-001
 ```
 
 ## Architecture

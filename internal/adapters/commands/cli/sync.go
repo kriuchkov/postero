@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/go-faster/errors"
+	"github.com/spf13/cobra"
+
 	"github.com/kriuchkov/postero/internal/adapters/mail/imap"
 	appcore "github.com/kriuchkov/postero/internal/app"
 	"github.com/kriuchkov/postero/internal/config"
 	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
 	"github.com/kriuchkov/postero/internal/core/ports"
-	"github.com/spf13/cobra"
 )
 
 var syncAccountName string
@@ -60,7 +61,15 @@ func syncAccount(ctx context.Context, store ports.MessageRepository, account con
 	}
 
 	repo := imap.NewRepository()
-	if err := repo.Connect(ctx, account.IMAP.Host, account.IMAP.Port, username, password, account.IMAP.AuthType, account.IMAP.TLS); err != nil {
+	if err := repo.Connect(
+		ctx,
+		account.IMAP.Host,
+		account.IMAP.Port,
+		username,
+		password,
+		account.IMAP.AuthType,
+		account.IMAP.TLS,
+	); err != nil {
 		return 0, errors.Wrapf(err, "connect imap for %s", account.Name)
 	}
 	defer repo.Disconnect(ctx) //nolint:errcheck // best-effort cleanup after sync.

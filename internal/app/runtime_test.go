@@ -3,8 +3,9 @@ package app
 import (
 	"testing"
 
-	"github.com/kriuchkov/postero/internal/config"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/kriuchkov/postero/internal/config"
 )
 
 func TestResolveAccount(t *testing.T) {

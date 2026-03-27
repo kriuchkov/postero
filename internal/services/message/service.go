@@ -60,17 +60,18 @@ func (s *Service) SearchMessages(ctx context.Context, criteria models.SearchCrit
 
 func (s *Service) ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.Message, error) {
 	msg := &models.Message{
-		AccountID: request.AccountID,
-		Subject:   request.Subject,
-		From:      request.From,
-		To:        request.To,
-		Cc:        request.Cc,
-		Bcc:       request.Bcc,
-		Body:      request.Body,
-		HTML:      request.HTML,
-		Date:      time.Now(),
-		Labels:    addUniqueLabels(request.Labels, "draft"),
-		IsDraft:   true,
+		AccountID:   request.AccountID,
+		Subject:     request.Subject,
+		From:        request.From,
+		To:          request.To,
+		Cc:          request.Cc,
+		Bcc:         request.Bcc,
+		Body:        request.Body,
+		HTML:        request.HTML,
+		Attachments: cloneAttachments(request.Attachments),
+		Date:        time.Now(),
+		Labels:      addUniqueLabels(request.Labels, "draft"),
+		IsDraft:     true,
 	}
 	msg.Flags.Draft = true
 
@@ -457,22 +458,32 @@ func cloneMessage(msg *models.Message) *models.Message {
 		Size:      msg.Size,
 	}
 
-	if len(msg.Attachments) > 0 {
-		result.Attachments = make([]*models.Attachment, 0, len(msg.Attachments))
-		for _, att := range msg.Attachments {
-			if att == nil {
-				continue
-			}
-			result.Attachments = append(result.Attachments, &models.Attachment{
-				Filename: att.Filename,
-				Size:     att.Size,
-				MimeType: att.MimeType,
-				Data:     append([]byte{}, att.Data...),
-			})
-		}
-	}
+	result.Attachments = cloneAttachments(msg.Attachments)
 
 	return result
+}
+
+func cloneAttachments(attachments []*models.Attachment) []*models.Attachment {
+	if len(attachments) == 0 {
+		return nil
+	}
+
+	cloned := make([]*models.Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		if att == nil {
+			continue
+		}
+		cloned = append(cloned, &models.Attachment{
+			Filename: att.Filename,
+			Size:     att.Size,
+			MimeType: att.MimeType,
+			Data:     append([]byte{}, att.Data...),
+		})
+	}
+	if len(cloned) == 0 {
+		return nil
+	}
+	return cloned
 }
 
 func addUniqueLabels(existing []string, labels ...string) []string {

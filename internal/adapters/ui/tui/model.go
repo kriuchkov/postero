@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+
 	appcore "github.com/kriuchkov/postero/internal/app"
 	"github.com/kriuchkov/postero/internal/config"
 	"github.com/kriuchkov/postero/internal/core/models"
@@ -37,6 +38,7 @@ type Model struct {
 	sidebarItems     []string
 	sidebarCursor    int
 	service          ports.MessageService
+	assistant        ports.DraftAssistant
 	allMessages      []*models.Message
 	sidebarTagSource []*models.Message
 	messages         []*models.Message
@@ -44,8 +46,12 @@ type Model struct {
 	fetchOffset      int
 	hasMoreMessages  bool
 	messagesLoading  bool
+	aiGenerating     bool
 	loadingFrame     int
 	loadingToken     int
+	aiLoadingFrame   int
+	aiLoadingToken   int
+	aiLoadingLabel   string
 	activeDraft      *models.Message // For compose/reply
 	accountNames     []string
 	accountEmails    map[string]string
@@ -58,6 +64,7 @@ type Model struct {
 	composeTitle     string
 	composeHint      string
 	composeEditing   bool
+	composeBaseline  *models.Message
 	searchInput      textinput.Model
 	commandActive    bool
 	commandDraft     string
@@ -72,6 +79,8 @@ type Model struct {
 	contentViewport  viewport.Model
 	contentMessageID string
 	pendingMotion    string
+	pendingCount     string
+	lastAction       repeatableAction
 
 	// Compose inputs
 	toInput      textinput.Model
@@ -86,6 +95,7 @@ func initialModel() Model {
 
 	cfg, err := appcore.LoadConfig()
 	var msgService ports.MessageService
+	var draftAssistant ports.DraftAssistant
 	defaultAcctID := ""
 	defaultFrom := ""
 	accountNames := []string{}
@@ -107,6 +117,9 @@ func initialModel() Model {
 
 		if service, _, serviceErr := appcore.NewMessageService(); serviceErr == nil {
 			msgService = service
+		}
+		if assistant, assistantErr := appcore.NewDraftAssistantWithConfig(cfg); assistantErr == nil {
+			draftAssistant = assistant
 		}
 	}
 
@@ -130,6 +143,7 @@ func initialModel() Model {
 		sidebarItems:     items,
 		sidebarCursor:    0,
 		service:          msgService,
+		assistant:        draftAssistant,
 		allMessages:      []*models.Message{},
 		sidebarTagSource: []*models.Message{},
 		messages:         []*models.Message{},
@@ -137,8 +151,12 @@ func initialModel() Model {
 		fetchOffset:      0,
 		hasMoreMessages:  false,
 		messagesLoading:  false,
+		aiGenerating:     false,
 		loadingFrame:     0,
 		loadingToken:     0,
+		aiLoadingFrame:   0,
+		aiLoadingToken:   0,
+		aiLoadingLabel:   "",
 		activeDraft:      nil,
 		accountNames:     accountNames,
 		accountEmails:    accountEmails,
@@ -168,6 +186,8 @@ func initialModel() Model {
 		contentViewport:  viewport.New(0, 0),
 		contentMessageID: "",
 		pendingMotion:    "",
+		pendingCount:     "",
+		lastAction:       repeatableActionNone,
 		toInput:          textinput.New(),
 		subjectInput:     textinput.New(),
 		bodyInput: func() textarea.Model {

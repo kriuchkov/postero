@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,55 +59,64 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openCommandPrompt()
 				return m, nil
 			case key.Matches(msg, m.keys.Esc) && m.composeEditing:
+				m.clearPendingCount()
 				m.composeEditing = false
 				m.applyComposeFocus()
 				m.setStatus("Exited writing mode")
 				return m, nil
 			case key.Matches(msg, m.keys.Esc):
 				m.state = stateList
-				m.activeDraft = nil
-				m.composeEditing = false
+				m.resetComposeState()
 				m.setStatus("Compose cancelled")
 				return m, m.fetchMessages()
+			case !m.composeEditing && m.captureCountPrefix(msg):
+				return m, nil
 			case !m.composeEditing && m.handleComposeMotion(msg):
 				return m, nil
 			case !m.composeEditing && isSingleRune(msg, 'o'):
+				m.clearPendingCount()
 				m.openComposeBody(false)
 				return m, nil
 			case !m.composeEditing && isSingleRune(msg, 'O'):
+				m.clearPendingCount()
 				m.openComposeBody(true)
 				return m, nil
 			case matchesUp(msg, m.keys.Up) && !m.composeEditing:
+				count := m.consumeCount()
 				if m.focusIndex == 0 && msg.Type == tea.KeyUp {
-					m.cycleComposeAccount(-1)
+					m.cycleComposeAccount(-count)
 					return m, nil
 				}
-				m.moveComposeFocus(-1)
+				m.moveComposeFocus(-count)
 				return m, nil
 			case matchesDown(msg, m.keys.Down) && !m.composeEditing:
+				count := m.consumeCount()
 				if m.focusIndex == 0 && msg.Type == tea.KeyDown {
-					m.cycleComposeAccount(1)
+					m.cycleComposeAccount(count)
 					return m, nil
 				}
-				m.moveComposeFocus(1)
+				m.moveComposeFocus(count)
 				return m, nil
 			case matchesLeft(msg, m.keys.Left) && !m.composeEditing && m.focusIndex == 0:
-				m.cycleComposeAccount(-1)
+				m.cycleComposeAccount(-m.consumeCount())
 				return m, nil
 			case matchesRight(msg, m.keys.Right) && !m.composeEditing && m.focusIndex == 0:
-				m.cycleComposeAccount(1)
+				m.cycleComposeAccount(m.consumeCount())
 				return m, nil
 			case key.Matches(msg, m.keys.Enter) && !m.composeEditing && m.focusIndex == 0:
+				m.clearPendingCount()
 				m.focusIndex++
 				m.composeEditing = true
 				m.applyComposeFocus()
 				return m, nil
 			case key.Matches(msg, m.keys.Edit) && !m.composeEditing && m.focusIndex > 0:
+				m.clearPendingCount()
 				m.composeEditing = true
 				m.applyComposeFocus()
 				m.clearStatus()
 				return m, nil
 			case key.Matches(msg, m.keys.Enter) && !m.composeEditing && m.focusIndex > 0:
+				m.clearPendingCount()
 				m.composeEditing = true
 				m.applyComposeFocus()
 				m.clearStatus()
@@ -118,16 +129,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.applyComposeFocus()
 				return m, nil
 			case key.Matches(msg, m.keys.SaveDraft) && m.activeDraft != nil:
+				m.clearPendingCount()
 				if _, err := m.persistActiveDraft(context.Background()); err != nil {
 					m.setError(err.Error())
 					return m, nil
 				}
 				m.state = stateList
-				m.activeDraft = nil
-				m.composeEditing = false
+				m.resetComposeState()
 				m.setStatus("Draft saved")
 				return m, m.fetchMessages()
 			case key.Matches(msg, m.keys.Send) && m.activeDraft != nil:
+				m.clearPendingCount()
 				draft, err := m.persistActiveDraft(context.Background())
 				if err != nil {
 					m.setError(err.Error())
@@ -142,18 +154,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.state = stateList
-				m.activeDraft = nil
-				m.composeEditing = false
+				m.resetComposeState()
 				m.setStatus("Message sent")
 				return m, m.fetchMessages()
 			}
 
 			if msg.String() == "tab" && !m.composeEditing {
+				m.clearPendingCount()
 				m.focusIndex = (m.focusIndex + 1) % 4
 				m.applyComposeFocus()
 				return m, nil
 			}
 			if msg.String() == "shift+tab" && !m.composeEditing {
+				m.clearPendingCount()
 				m.focusIndex--
 				if m.focusIndex < 0 {
 					m.focusIndex = 3
@@ -251,6 +264,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.state != stateSidebar || msg.Type != tea.KeyRunes || len(msg.Runes) != 1 || !sidebarConsumesTagHotkey(m, msg.Runes[0]) {
+			if m.captureCountPrefix(msg) {
+				return m, nil
+			}
 			if handled, motionCmd := m.handleBrowseMotion(msg); handled {
 				return m, motionCmd
 			}
@@ -263,6 +279,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openCommandPrompt()
 			return m, nil
 		case keyMatches(msg, m.keys.Refresh):
+			m.clearPendingCount()
 			m.setStatus("Mailbox refreshed")
 			m.prepareFreshMessageFetch()
 			return m, m.fetchMessages()
@@ -287,19 +304,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.fetchMessages()
 			}
 		case keyMatches(msg, m.keys.Undo) && m.pendingUndo != nil:
-			snapshot := cloneMessage(m.pendingUndo.message)
+			m.clearPendingCount()
+			snapshots := m.pendingUndo.snapshots()
 			m.pendingUndo = nil
-			if _, err := m.service.RestoreMessage(context.Background(), snapshot); err != nil {
-				m.setError("Undo failed")
-				return m, nil
+			for _, snapshot := range snapshots {
+				if _, err := m.service.RestoreMessage(context.Background(), cloneMessage(snapshot)); err != nil {
+					m.setError("Undo failed")
+					return m, nil
+				}
 			}
 			m.setStatus("Undo applied")
-			return m, m.fetchMessagesForID(snapshot.ID)
+			if len(snapshots) > 0 {
+				return m, m.fetchMessagesForID(snapshots[0].ID)
+			}
+			return m, m.fetchMessages()
+		case matchesRepeat(msg, m.keys.Repeat) && m.lastAction != repeatableActionNone:
+			return m, m.applyRepeatableAction(m.lastAction, m.consumeCount())
 		case matchesSearch(msg, m.keys.Search):
 			m.openSearchPrompt()
 			m.setStatus("Search the current mailbox")
 			return m, nil
 		case keyMatches(msg, m.keys.MarkRead):
+			m.clearPendingCount()
 			if len(m.messages) == 0 || m.listCursor < 0 || m.listCursor >= len(m.messages) {
 				return m, nil
 			}
@@ -316,6 +342,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus("Search cleared")
 			return m, clearCmd
 		case keyMatches(msg, m.keys.Enter):
+			m.clearPendingCount()
 			if m.state == stateSidebar {
 				oldState := m.state
 				m.nextFocus()
@@ -342,40 +369,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case matchesUp(msg, m.keys.Up):
+			count := m.consumeCount()
 			if m.state == stateSidebar {
-				if moveCmd, moved := m.moveSidebarSelection(-1); moved {
-					return m, moveCmd
-				}
-				return m, nil
+				return m.sidebarMoveBy(-count)
 			}
 			if m.state == stateList {
 				if m.listCursor > 0 {
-					m.listCursor--
+					m.listCursor = max(0, m.listCursor-count)
 					m.markSelectedMessageRead(context.Background())
 					m.syncContentViewport(true)
 				}
 				return m, m.maybeFetchMoreMessages()
 			}
-			m.contentViewport.SetYOffset(max(m.contentViewport.YOffset-1, 0))
+			m.contentViewport.SetYOffset(max(m.contentViewport.YOffset-count, 0))
 		case matchesDown(msg, m.keys.Down):
+			count := m.consumeCount()
 			if m.state == stateSidebar {
-				if moveCmd, moved := m.moveSidebarSelection(1); moved {
-					return m, moveCmd
-				}
-				return m, nil
+				return m.sidebarMoveBy(count)
 			}
 			if m.state == stateList {
 				if m.listCursor < len(m.messages)-1 {
-					m.listCursor++
+					m.listCursor = min(len(m.messages)-1, m.listCursor+count)
 					m.markSelectedMessageRead(context.Background())
 					m.syncContentViewport(true)
 				}
 				return m, m.maybeFetchMoreMessages()
 			}
-			m.contentViewport.SetYOffset(m.contentViewport.YOffset + 1)
+			m.contentViewport.SetYOffset(m.contentViewport.YOffset + count)
 		case matchesRight(msg, m.keys.Right):
+			count := m.consumeCount()
 			oldState := m.state
-			m.nextFocus()
+			for range count {
+				m.nextFocus()
+			}
 			if oldState == stateSidebar && m.state == stateList {
 				m.prepareFreshMessageFetch()
 				return m, m.fetchMessages()
@@ -385,140 +411,90 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncContentViewport(true)
 			}
 		case matchesLeft(msg, m.keys.Left):
-			m.prevFocus()
+			count := m.consumeCount()
+			for range count {
+				m.prevFocus()
+			}
 		case keyMatches(msg, m.keys.PageUp):
+			count := m.consumeCount()
 			if m.state == stateSidebar {
-				return m.sidebarMoveBy(-10)
+				return m.sidebarMoveBy(-10 * count)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
 					return m, nil
 				}
-				m.listCursor = max(0, m.listCursor-10)
+				m.listCursor = max(0, m.listCursor-(10*count))
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
 				return m, m.maybeFetchMoreMessages()
 			}
-			m.contentViewport.PageUp()
+			for range count {
+				m.contentViewport.PageUp()
+			}
 		case keyMatches(msg, m.keys.PageDown):
+			count := m.consumeCount()
 			if m.state == stateSidebar {
-				return m.sidebarMoveBy(10)
+				return m.sidebarMoveBy(10 * count)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
 					return m, nil
 				}
-				m.listCursor = min(len(m.messages)-1, m.listCursor+10)
+				m.listCursor = min(len(m.messages)-1, m.listCursor+(10*count))
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
 				return m, m.maybeFetchMoreMessages()
 			}
-			m.contentViewport.PageDown()
+			for range count {
+				m.contentViewport.PageDown()
+			}
 		case keyMatches(msg, m.keys.HalfUp):
+			count := m.consumeCount()
 			if m.state == stateSidebar {
-				return m.sidebarMoveBy(-5)
+				return m.sidebarMoveBy(-5 * count)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
 					return m, nil
 				}
-				m.listCursor = max(0, m.listCursor-5)
+				m.listCursor = max(0, m.listCursor-(5*count))
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
 				return m, m.maybeFetchMoreMessages()
 			}
-			m.contentViewport.HalfPageUp()
+			for range count {
+				m.contentViewport.HalfPageUp()
+			}
 		case keyMatches(msg, m.keys.HalfDown):
+			count := m.consumeCount()
 			if m.state == stateSidebar {
-				return m.sidebarMoveBy(5)
+				return m.sidebarMoveBy(5 * count)
 			}
 			if m.state == stateList {
 				if len(m.messages) == 0 {
 					return m, nil
 				}
-				m.listCursor = min(len(m.messages)-1, m.listCursor+5)
+				m.listCursor = min(len(m.messages)-1, m.listCursor+(5*count))
 				m.markSelectedMessageRead(context.Background())
 				m.syncContentViewport(true)
 				return m, m.maybeFetchMoreMessages()
 			}
-			m.contentViewport.HalfPageDown()
-		case keyMatches(msg, m.keys.Top):
-			if m.state == stateSidebar {
-				return m.sidebarJumpToTop()
+			for range count {
+				m.contentViewport.HalfPageDown()
 			}
-			if m.state == stateList {
-				m.listCursor = 0
-				m.markSelectedMessageRead(context.Background())
-				m.syncContentViewport(true)
-				return m, m.maybeFetchMoreMessages()
-			}
-			m.contentViewport.GotoTop()
-		case keyMatches(msg, m.keys.Bottom):
-			if m.state == stateSidebar {
-				return m.sidebarJumpToBottom()
-			}
-			if m.state == stateList {
-				if len(m.messages) == 0 {
-					return m, nil
-				}
-				m.listCursor = len(m.messages) - 1
-				m.markSelectedMessageRead(context.Background())
-				m.syncContentViewport(true)
-				return m, m.maybeFetchMoreMessages()
-			}
-			m.contentViewport.GotoBottom()
 		case keyMatches(msg, m.keys.Delete):
-			if selected, ok := m.selectedMessage(); ok {
-				snapshot := cloneMessage(m.messages[m.listCursor])
-				if m.isTrashSelection() {
-					if err := m.service.DeleteMessage(context.Background(), selected.ID); err == nil {
-						m.removeMessageAtCursor()
-						m.armUndo(snapshot, "delete")
-						m.setStatus("Message permanently deleted. Press u to undo")
-						m.prepareFreshMessageFetch()
-						return m, m.fetchMessagesAtCursor(m.listCursor)
-					}
-					m.setError("Permanent delete failed")
-					return m, nil
-				}
-				if _, err := m.service.ToggleDelete(context.Background(), selected.ID); err == nil {
-					m.removeMessageAtCursor()
-					m.armUndo(snapshot, "trash")
-					m.setStatus("Message moved to trash. Press u to undo")
-					m.prepareFreshMessageFetch()
-					return m, m.fetchMessagesAtCursor(m.listCursor)
-				}
-				m.setError("Delete failed")
+			action := repeatableActionTrash
+			if m.isTrashSelection() {
+				action = repeatableActionDelete
 			}
+			return m, m.applyRepeatableAction(action, m.consumeCount())
 		case keyMatches(msg, m.keys.Archive):
-			if selected, ok := m.selectedMessage(); ok {
-				snapshot := cloneMessage(m.messages[m.listCursor])
-				if _, err := m.service.ArchiveMessage(context.Background(), selected.ID); err == nil {
-					if m.listCursor > 0 && m.listCursor >= len(m.messages)-1 {
-						m.listCursor--
-					}
-					m.armUndo(snapshot, "archive")
-					m.setStatus("Message archived. Press u to undo")
-					m.prepareFreshMessageFetch()
-					return m, m.fetchMessagesAtCursor(m.listCursor)
-				}
-				m.setError("Archive failed")
-			}
+			return m, m.applyRepeatableAction(repeatableActionArchive, m.consumeCount())
 		case keyMatches(msg, m.keys.Spam):
-			if selected, ok := m.selectedMessage(); ok {
-				snapshot := cloneMessage(m.messages[m.listCursor])
-				if _, err := m.service.MarkAsSpam(context.Background(), selected.ID); err == nil {
-					if m.listCursor > 0 && m.listCursor >= len(m.messages)-1 {
-						m.listCursor--
-					}
-					m.armUndo(snapshot, "spam")
-					m.setStatus("Message marked as spam. Press u to undo")
-					m.prepareFreshMessageFetch()
-					return m, m.fetchMessagesAtCursor(m.listCursor)
-				}
-				m.setError("Spam update failed")
-			}
+			return m, m.applyRepeatableAction(repeatableActionSpam, m.consumeCount())
 		case keyMatches(msg, m.keys.Download):
+			m.clearPendingCount()
 			if selected, ok := m.selectedMessage(); ok {
 				if len(selected.Attachments) > 0 {
 					go func(msg *models.Message) {
@@ -543,6 +519,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case matchesReply(msg, m.keys.Reply):
+			m.clearPendingCount()
 			if selected, ok := m.selectedMessage(); ok {
 				draft := compose.BuildReply(&selected, compose.ReplyOptions{Self: []string{m.senderForAccount(selected.AccountID)}})
 				m.enterComposeState(&models.Message{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Cc: draft.Cc, Body: draft.Body}, 3)
@@ -552,6 +529,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearStatus()
 			}
 		case matchesReplyAll(msg, m.keys.ReplyAll):
+			m.clearPendingCount()
 			if selected, ok := m.selectedMessage(); ok {
 				draft := compose.BuildReply(&selected, compose.ReplyOptions{ReplyAll: true, Self: []string{m.senderForAccount(selected.AccountID)}})
 				m.enterComposeState(&models.Message{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Cc: draft.Cc, Body: draft.Body}, 3)
@@ -561,6 +539,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearStatus()
 			}
 		case matchesForward(msg, m.keys.Forward):
+			m.clearPendingCount()
 			if selected, ok := m.selectedMessage(); ok {
 				draft := compose.BuildForward(&selected, nil, "")
 				m.enterComposeState(&models.Message{AccountID: selected.AccountID, From: m.senderForAccount(selected.AccountID), ThreadID: draft.ThreadID, Subject: draft.Subject, To: draft.To, Body: draft.Body}, 1)
@@ -570,11 +549,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearStatus()
 			}
 		case matchesCompose(msg, m.keys.Compose):
+			m.clearPendingCount()
 			m.enterComposeState(&models.Message{AccountID: m.defaultAcctID, From: m.defaultFrom, Subject: "", To: []string{}, Body: ""}, 0)
 			m.setComposeContext("Composer", "Write now, save when ready.")
 			m.composeEditing = false
 			m.clearStatus()
 		}
+	case aiDraftGeneratedMsg:
+		m.finishAIGeneration()
+		if msg.draft == nil {
+			return m, nil
+		}
+		m.enterComposeState(msg.draft, msg.focusIndex)
+		m.setComposeContext(msg.title, msg.hint)
+		m.composeEditing = msg.composeEditing
+		m.applyComposeFocus()
+		if msg.moveCursorTop {
+			m.moveReplyCursorToStart()
+		}
+		m.setStatus(msg.status)
+		return m, nil
+	case aiDraftFailedMsg:
+		m.finishAIGeneration()
+		if msg.err != nil {
+			m.setError(msg.err.Error())
+		}
+		return m, nil
 	case messagesLoadedMsg:
 		if msg.scopeKey != "" && msg.scopeKey != m.currentMessageScopeKey() {
 			return m, nil
@@ -626,6 +626,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loadingFrame = msg.frame
 		return m, m.loadingTickCmd()
+	case aiLoadingTickMsg:
+		if !m.aiGenerating || msg.token != m.aiLoadingToken {
+			return m, nil
+		}
+		m.aiLoadingFrame = msg.frame
+		return m, m.aiLoadingTickCmd()
 	case undoExpiredMsg:
 		if m.pendingUndo != nil && m.pendingUndo.token == msg.token {
 			m.pendingUndo = nil
@@ -645,6 +651,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) enterComposeState(draft *models.Message, focusIndex int) {
 	m.state = stateCompose
 	m.activeDraft = draft
+	m.composeBaseline = cloneMessage(draft)
+	m.pendingMotion = ""
+	m.pendingCount = ""
 	m.toInput.SetValue(strings.Join(draft.To, ", "))
 	m.subjectInput.SetValue(draft.Subject)
 	m.bodyInput.SetValue(draft.Body)
@@ -770,6 +779,101 @@ func matchesForward(msg tea.KeyMsg, binding key.Binding) bool {
 	return keyMatches(msg, binding) || isSingleRune(msg, 'f')
 }
 
+func matchesRepeat(msg tea.KeyMsg, binding key.Binding) bool {
+	return keyMatches(msg, binding) || isSingleRune(msg, '.')
+}
+
+func (m *Model) captureCountPrefix(msg tea.KeyMsg) bool {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) != 1 {
+		return false
+	}
+	r := msg.Runes[0]
+	if r < '0' || r > '9' {
+		return false
+	}
+	if r == '0' && m.pendingCount == "" {
+		return false
+	}
+	m.pendingCount += string(r)
+	return true
+}
+
+func (m *Model) clearPendingCount() {
+	m.pendingCount = ""
+}
+
+func (m *Model) consumeCount() int {
+	value := m.consumeExplicitCount()
+	if value > 0 {
+		return value
+	}
+	return 1
+}
+
+func (m *Model) consumeExplicitCount() int {
+	if strings.TrimSpace(m.pendingCount) == "" {
+		return 0
+	}
+	value, err := strconv.Atoi(m.pendingCount)
+	m.pendingCount = ""
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+func composeDraftHasContent(draft *models.Message) bool {
+	if draft == nil {
+		return false
+	}
+	if strings.TrimSpace(draft.Subject) != "" || strings.TrimSpace(draft.Body) != "" {
+		return true
+	}
+	return len(trimRecipients(draft.To)) > 0 || len(trimRecipients(draft.Cc)) > 0 || len(trimRecipients(draft.Bcc)) > 0
+}
+
+func composeDraftEqual(left, right *models.Message) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return strings.EqualFold(strings.TrimSpace(left.AccountID), strings.TrimSpace(right.AccountID)) &&
+		strings.TrimSpace(left.From) == strings.TrimSpace(right.From) &&
+		strings.TrimSpace(left.Subject) == strings.TrimSpace(right.Subject) &&
+		left.Body == right.Body &&
+		slices.Equal(trimRecipients(left.To), trimRecipients(right.To)) &&
+		slices.Equal(trimRecipients(left.Cc), trimRecipients(right.Cc)) &&
+		slices.Equal(trimRecipients(left.Bcc), trimRecipients(right.Bcc))
+}
+
+func (m Model) hasUnsavedComposeChanges() bool {
+	if m.state != stateCompose || m.activeDraft == nil {
+		return false
+	}
+	if m.composeBaseline == nil {
+		return composeDraftHasContent(m.activeDraft)
+	}
+	return !composeDraftEqual(m.composeBaseline, m.activeDraft)
+}
+
+func (m *Model) resetComposeState() {
+	m.activeDraft = nil
+	m.composeBaseline = nil
+	m.composeEditing = false
+	m.pendingMotion = ""
+	m.pendingCount = ""
+}
+
+func (m *Model) jumpToComposeField(index int) {
+	if index < 0 {
+		index = 0
+	}
+	if index > 3 {
+		index = 3
+	}
+	m.focusIndex = index
+	m.applyComposeFocus()
+}
+
 func sidebarConsumesTagHotkey(m Model, key rune) bool {
 	_, ok := findSidebarTagByHotkey(m, key)
 	return ok
@@ -798,16 +902,6 @@ func (m *Model) sidebarMoveBy(delta int) (Model, tea.Cmd) {
 		return *m, nil
 	}
 	return *m, m.fetchMessages()
-}
-
-func (m *Model) moveSidebarSelection(step int) (tea.Cmd, bool) {
-	if step == 0 {
-		return nil, false
-	}
-	if !m.moveSidebarSelectionOne(step) {
-		return nil, false
-	}
-	return m.fetchMessages(), true
 }
 
 func (m *Model) moveSidebarSelectionOne(step int) bool {
@@ -904,21 +998,38 @@ func (m *Model) handleComposeMotion(msg tea.KeyMsg) bool {
 	case isSingleRune(msg, 'g'):
 		if m.pendingMotion == "g" {
 			m.pendingMotion = ""
-			m.focusIndex = 0
-			m.applyComposeFocus()
+			if count := m.consumeExplicitCount(); count > 0 {
+				m.jumpToComposeField(count - 1)
+			} else {
+				m.jumpToComposeField(0)
+			}
 			return true
 		}
 		m.pendingMotion = "g"
 		return true
+	case keyMatches(msg, m.keys.Top):
+		m.pendingMotion = ""
+		if count := m.consumeExplicitCount(); count > 0 {
+			m.jumpToComposeField(count - 1)
+		} else {
+			m.jumpToComposeField(0)
+		}
+		return true
+	case keyMatches(msg, m.keys.Bottom) || isSingleRune(msg, 'G'):
+		m.pendingMotion = ""
+		if count := m.consumeExplicitCount(); count > 0 {
+			m.jumpToComposeField(count - 1)
+		} else {
+			m.jumpToComposeField(3)
+		}
+		return true
 	case isSingleRune(msg, '0'):
 		m.pendingMotion = ""
-		m.focusIndex = 0
-		m.applyComposeFocus()
+		m.jumpToComposeField(0)
 		return true
 	case isSingleRune(msg, '$'):
 		m.pendingMotion = ""
-		m.focusIndex = 3
-		m.applyComposeFocus()
+		m.jumpToComposeField(3)
 		return true
 	default:
 		return false
@@ -932,22 +1043,46 @@ func (m *Model) handleBrowseMotion(msg tea.KeyMsg) (bool, tea.Cmd) {
 
 	switch {
 	case isSingleRune(msg, 'n'):
-		return true, m.repeatSearch(1)
+		return true, m.repeatSearch(m.consumeCount())
 	case isSingleRune(msg, 'N'):
-		return true, m.repeatSearch(-1)
+		return true, m.repeatSearch(-m.consumeCount())
 	case isSingleRune(msg, 'H'):
+		m.clearPendingCount()
 		return m.jumpToListViewport(listViewportTop)
 	case isSingleRune(msg, 'M'):
+		m.clearPendingCount()
 		return m.jumpToListViewport(listViewportMiddle)
 	case isSingleRune(msg, 'L'):
+		m.clearPendingCount()
 		return m.jumpToListViewport(listViewportBottom)
 	case isSingleRune(msg, 'g'):
 		if m.pendingMotion == "g" {
 			m.pendingMotion = ""
+			if m.state == stateList || m.state == stateContent {
+				if count := m.consumeExplicitCount(); count > 0 {
+					return true, m.jumpToIndexedPosition(count - 1)
+				}
+			}
 			return true, m.jumpToTop()
 		}
 		m.pendingMotion = "g"
 		return true, nil
+	case keyMatches(msg, m.keys.Top):
+		m.pendingMotion = ""
+		if m.state == stateList || m.state == stateContent {
+			if count := m.consumeExplicitCount(); count > 0 {
+				return true, m.jumpToIndexedPosition(count - 1)
+			}
+		}
+		return true, m.jumpToTop()
+	case keyMatches(msg, m.keys.Bottom) || isSingleRune(msg, 'G'):
+		m.pendingMotion = ""
+		if m.state == stateList || m.state == stateContent {
+			if count := m.consumeExplicitCount(); count > 0 {
+				return true, m.jumpToIndexedPosition(count - 1)
+			}
+		}
+		return true, m.jumpToBottom()
 	case isSingleRune(msg, '0'):
 		m.pendingMotion = ""
 		return true, m.jumpToTop()
@@ -1023,8 +1158,11 @@ func (m *Model) jumpToTop() tea.Cmd {
 		m.markSelectedMessageRead(context.Background())
 		m.syncContentViewport(true)
 		return nil
-	case stateContent, stateCompose:
+	case stateContent:
 		m.contentViewport.GotoTop()
+		return nil
+	case stateCompose:
+		m.jumpToComposeField(0)
 		return nil
 	}
 	return nil
@@ -1043,8 +1181,37 @@ func (m *Model) jumpToBottom() tea.Cmd {
 		m.markSelectedMessageRead(context.Background())
 		m.syncContentViewport(true)
 		return nil
-	case stateContent, stateCompose:
+	case stateContent:
 		m.contentViewport.GotoBottom()
+		return nil
+	case stateCompose:
+		m.jumpToComposeField(3)
+		return nil
+	}
+	return nil
+}
+
+func (m *Model) jumpToIndexedPosition(index int) tea.Cmd {
+	if index < 0 {
+		index = 0
+	}
+	switch m.state {
+	case stateList:
+		if len(m.messages) == 0 {
+			return nil
+		}
+		m.listCursor = min(len(m.messages)-1, index)
+		m.markSelectedMessageRead(context.Background())
+		m.syncContentViewport(true)
+		return m.maybeFetchMoreMessages()
+	case stateContent:
+		lineCount := max(contentLineCount(m.currentMessageBody()), 1)
+		m.contentViewport.SetYOffset(min(lineCount-1, index))
+		return nil
+	case stateCompose:
+		m.jumpToComposeField(index)
+		return nil
+	case stateSidebar:
 		return nil
 	}
 	return nil
@@ -1228,6 +1395,7 @@ func (m *Model) persistActiveDraft(ctx context.Context) (*models.Message, error)
 			}
 		}
 		m.activeDraft = created
+		m.composeBaseline = cloneMessage(created)
 		return created, nil
 	}
 
@@ -1267,6 +1435,7 @@ func (m *Model) persistActiveDraft(ctx context.Context) (*models.Message, error)
 		}
 	}
 	m.activeDraft = updated
+	m.composeBaseline = cloneMessage(updated)
 	return updated, nil
 }
 
@@ -1416,6 +1585,7 @@ func (m *Model) openSearchPrompt() {
 	m.searchActive = true
 	m.searchDebouncing = false
 	m.pendingMotion = ""
+	m.pendingCount = ""
 	m.searchInput.Prompt = "/ "
 	m.searchInput.Placeholder = "subject, sender, body"
 	m.applySearchInputStyles(false)
@@ -1428,8 +1598,9 @@ func (m *Model) openCommandPrompt() {
 	m.searchActive = false
 	m.commandActive = true
 	m.pendingMotion = ""
+	m.pendingCount = ""
 	m.searchInput.Prompt = ": "
-	m.searchInput.Placeholder = "compose | inbox | drafts | refresh | quit"
+	m.searchInput.Placeholder = commandPromptPlaceholder()
 	m.applySearchInputStyles(true)
 	m.commandDraft = ""
 	m.commandHistoryIx = -1
@@ -1490,9 +1661,14 @@ func (m *Model) clearSearch() tea.Cmd {
 }
 
 func (m Model) executeCommandPrompt() (tea.Model, tea.Cmd) {
-	command := strings.ToLower(strings.TrimSpace(m.searchInput.Value()))
-	m.recordCommandHistory(command)
+	rawCommand := strings.TrimSpace(m.searchInput.Value())
+	command, argument := parseCommandPrompt(rawCommand)
+	m.recordCommandHistory(rawCommand)
 	m.closeCommandPrompt()
+	if m.state == stateCompose && m.hasUnsavedComposeChanges() && commandLeavesCompose(command) {
+		m.setError("Unsaved draft. Save, send, or cancel before leaving compose")
+		return m, nil
+	}
 
 	switch command {
 	case "", "cancel":
@@ -1501,22 +1677,51 @@ func (m Model) executeCommandPrompt() (tea.Model, tea.Cmd) {
 	case "q", "quit":
 		return m, tea.Quit
 	case "c", "compose":
+		m.resetComposeState()
 		m.enterComposeState(&models.Message{AccountID: m.defaultAcctID, From: m.defaultFrom, Subject: "", To: []string{}, Body: ""}, 0)
 		m.setComposeContext("Composer", "Write now, save when ready.")
 		m.composeEditing = false
 		m.clearStatus()
 		return m, nil
+	case "compose-ai":
+		options, err := parseAICommandOptions(argument)
+		if err != nil {
+			m.setError(err.Error())
+			return m, nil
+		}
+		m.prepareAIGeneration("AI draft")
+		m.setStatus("Generating AI draft...")
+		return m, m.withAILoadingIndicator(m.generateComposeAIDraft(options))
+	case "reply-ai":
+		options, err := parseAICommandOptions(argument)
+		if err != nil {
+			m.setError(err.Error())
+			return m, nil
+		}
+		m.prepareAIGeneration("AI reply")
+		m.setStatus("Generating AI reply...")
+		return m, m.withAILoadingIndicator(m.generateReplyAIDraft(options, false))
+	case "reply-all-ai":
+		options, err := parseAICommandOptions(argument)
+		if err != nil {
+			m.setError(err.Error())
+			return m, nil
+		}
+		m.prepareAIGeneration("AI reply-all")
+		m.setStatus("Generating AI reply-all...")
+		return m, m.withAILoadingIndicator(m.generateReplyAIDraft(options, true))
 	case "sync", "refresh":
 		m.setStatus("Mailbox refreshed")
 		return m, m.fetchMessages()
 	case "inbox", "sent", "drafts", "archive", "trash", "spam":
 		if m.selectMailboxCommand(command) {
+			m.resetComposeState()
 			m.state = stateList
 			m.setStatus("Switched to " + titleCaseASCII(command))
 			return m, m.fetchMessages()
 		}
 	case "help":
-		m.setStatus("Commands: compose inbox sent drafts archive trash spam refresh quit")
+		m.setStatus("Commands: " + strings.Join(commandPromptCandidates(), " "))
 		return m, nil
 	}
 
@@ -1611,14 +1816,190 @@ func titleCaseASCII(value string) string {
 	return strings.ToUpper(value[:1]) + value[1:]
 }
 
-func (m *Model) armUndo(snapshot *models.Message, action string) {
-	if snapshot == nil {
+func commandLeavesCompose(command string) bool {
+	switch command {
+	case "q", "quit", "c", "compose", "reply-ai", "reply-all-ai", "inbox", "sent", "drafts", "archive", "trash", "spam":
+		return true
+	default:
+		return false
+	}
+}
+
+func (m Model) currentMailboxAllowsMessage(msg *models.Message) bool {
+	if msg == nil {
+		return false
+	}
+	if accountID := strings.TrimSpace(m.activeAccountID); accountID != "" && !strings.EqualFold(accountID, msg.AccountID) {
+		return false
+	}
+	if tagID := strings.TrimSpace(m.activeTagID); tagID != "" && !messageHasLabel(msg, tagID) {
+		return false
+	}
+	if query := strings.TrimSpace(m.searchQuery); query != "" && !messageMatchesSearch(msg, strings.ToLower(query)) {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(currentMailboxTitle(m))) {
+	case "inbox":
+		return !msg.IsDraft && !msg.IsDeleted && !msg.IsSpam && messageHasLabel(msg, "inbox")
+	case "sent":
+		return !msg.IsDeleted && messageHasLabel(msg, "sent")
+	case "drafts":
+		return msg.IsDraft && !msg.IsDeleted
+	case "archive":
+		return !msg.IsDeleted && messageHasLabel(msg, "archive")
+	case "trash":
+		return msg.IsDeleted
+	case "spam":
+		return !msg.IsDeleted && msg.IsSpam
+	default:
+		return true
+	}
+}
+
+func messageHasLabel(msg *models.Message, label string) bool {
+	if msg == nil {
+		return false
+	}
+	for _, candidate := range msg.Labels {
+		if strings.EqualFold(strings.TrimSpace(candidate), strings.TrimSpace(label)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) applyRepeatableAction(action repeatableAction, count int) tea.Cmd {
+	if count < 1 {
+		count = 1
+	}
+	snapshots := make([]*models.Message, 0, count)
+	for range count {
+		snapshot, applied, failure := m.applyRepeatableActionOnce(action)
+		if failure != "" {
+			if len(snapshots) == 0 {
+				m.setError(failure)
+			}
+			break
+		}
+		if !applied {
+			break
+		}
+		snapshots = append(snapshots, snapshot)
+	}
+	if len(snapshots) == 0 {
+		return nil
+	}
+
+	m.lastAction = action
+	m.armUndoBatch(snapshots, string(action))
+	m.setStatus(repeatableActionStatus(action, len(snapshots)))
+	m.prepareFreshMessageFetch()
+	if selectedID := m.currentMessageID(); selectedID != "" {
+		return m.fetchMessagesForID(selectedID)
+	}
+	return m.fetchMessagesAtCursor(m.listCursor)
+}
+
+func (m *Model) applyRepeatableActionOnce(action repeatableAction) (*models.Message, bool, string) {
+	selected, ok := m.selectedMessage()
+	if !ok {
+		return nil, false, ""
+	}
+	snapshot := cloneMessage(m.messages[m.listCursor])
+	var (
+		updated *models.Message
+		err     error
+	)
+
+	switch action {
+	case repeatableActionNone:
+		return nil, false, ""
+	case repeatableActionTrash:
+		if m.isTrashSelection() {
+			return nil, false, "Trash action is unavailable in Trash"
+		}
+		updated, err = m.service.ToggleDelete(context.Background(), selected.ID)
+		if err != nil {
+			return nil, false, "Delete failed"
+		}
+	case repeatableActionDelete:
+		if err = m.service.DeleteMessage(context.Background(), selected.ID); err != nil {
+			return nil, false, "Permanent delete failed"
+		}
+	case repeatableActionArchive:
+		updated, err = m.service.ArchiveMessage(context.Background(), selected.ID)
+		if err != nil {
+			return nil, false, "Archive failed"
+		}
+	case repeatableActionSpam:
+		updated, err = m.service.MarkAsSpam(context.Background(), selected.ID)
+		if err != nil {
+			return nil, false, "Spam update failed"
+		}
+	default:
+		return nil, false, ""
+	}
+
+	if action == repeatableActionDelete || !m.currentMailboxAllowsMessage(updated) {
+		m.removeMessageAtCursor()
+	} else if updated != nil {
+		m.messages[m.listCursor] = updated
+		m.syncContentViewport(true)
+	}
+
+	return snapshot, true, ""
+}
+
+func repeatableActionStatus(action repeatableAction, count int) string {
+	if count <= 1 {
+		switch action {
+		case repeatableActionNone:
+			return ""
+		case repeatableActionTrash:
+			return "Message moved to trash. Press u to undo"
+		case repeatableActionDelete:
+			return "Message permanently deleted. Press u to undo"
+		case repeatableActionArchive:
+			return "Message archived. Press u to undo"
+		case repeatableActionSpam:
+			return "Message marked as spam. Press u to undo"
+		}
+	}
+	switch action {
+	case repeatableActionNone:
+		return ""
+	case repeatableActionTrash:
+		return fmt.Sprintf("%d messages moved to trash. Press u to undo", count)
+	case repeatableActionDelete:
+		return fmt.Sprintf("%d messages permanently deleted. Press u to undo", count)
+	case repeatableActionArchive:
+		return fmt.Sprintf("%d messages archived. Press u to undo", count)
+	case repeatableActionSpam:
+		return fmt.Sprintf("%d messages marked as spam. Press u to undo", count)
+	default:
+		return ""
+	}
+}
+
+func (m *Model) armUndoBatch(snapshots []*models.Message, action string) {
+	if len(snapshots) == 0 {
+		return
+	}
+	clones := make([]*models.Message, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot != nil {
+			clones = append(clones, cloneMessage(snapshot))
+		}
+	}
+	if len(clones) == 0 {
 		return
 	}
 	m.undoToken++
 	token := m.undoToken
 	m.pendingUndo = &undoState{
-		message:   cloneMessage(snapshot),
+		message:   clones[0],
+		messages:  clones,
 		action:    action,
 		token:     token,
 		expiresAt: time.Now().Add(8 * time.Second),

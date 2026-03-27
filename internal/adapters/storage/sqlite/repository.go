@@ -10,9 +10,10 @@ import (
 	"time"
 
 	"github.com/go-faster/errors"
+	_ "github.com/mattn/go-sqlite3" // required for database/sql SQLite driver registration.
+
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
-	_ "github.com/mattn/go-sqlite3" // required for database/sql SQLite driver registration.
 )
 
 type Repository struct {

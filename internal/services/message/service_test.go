@@ -40,16 +40,22 @@ func TestComposeMessage(t *testing.T) {
 	repo := mocks.NewMockMessageRepository(t)
 
 	repo.On("Save", context.Background(), mock.MatchedBy(func(message *models.Message) bool {
-		return message != nil && message.Subject == "Hello" && message.From == "sender@example.com" && message.IsDraft
+		return message != nil &&
+			message.Subject == "Hello" &&
+			message.From == "sender@example.com" &&
+			message.IsDraft &&
+			len(message.Attachments) == 1 &&
+			message.Attachments[0].Filename == "note.txt"
 	})).Return(nil)
 
 	svc := NewService(repo)
 	msg, err := svc.ComposeMessage(context.Background(), &models.CreateMessageRequest{
-		AccountID: "personal",
-		From:      "sender@example.com",
-		To:        []string{"recipient@example.com"},
-		Subject:   "Hello",
-		Body:      "Body",
+		AccountID:   "personal",
+		From:        "sender@example.com",
+		To:          []string{"recipient@example.com"},
+		Subject:     "Hello",
+		Body:        "Body",
+		Attachments: []*models.Attachment{{Filename: "note.txt", Size: 4, MimeType: "text/plain", Data: []byte("test")}},
 	})
 
 	require.NoError(t, err)
@@ -57,6 +63,8 @@ func TestComposeMessage(t *testing.T) {
 	assert.Equal(t, "Hello", msg.Subject)
 	assert.Equal(t, "sender@example.com", msg.From)
 	assert.True(t, msg.IsDraft)
+	require.Len(t, msg.Attachments, 1)
+	assert.Equal(t, "note.txt", msg.Attachments[0].Filename)
 }
 
 func TestGetMessage(t *testing.T) {

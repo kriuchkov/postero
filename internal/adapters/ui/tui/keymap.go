@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
+
 	"github.com/kriuchkov/postero/internal/config"
 )
 
@@ -16,6 +17,7 @@ type keyMap struct {
 	Search    key.Binding
 	MarkRead  key.Binding
 	Undo      key.Binding
+	Repeat    key.Binding
 	PageUp    key.Binding
 	PageDown  key.Binding
 	HalfUp    key.Binding
@@ -46,7 +48,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Left, k.Right},
 		{k.Enter, k.Search, k.Refresh},
-		{k.Undo},
+		{k.Undo, k.Repeat},
 		{k.HalfUp, k.HalfDown, k.Top, k.Bottom},
 		{k.Compose, k.Reply, k.ReplyAll, k.Forward},
 		{k.Archive, k.Spam, k.Delete},
@@ -66,6 +68,7 @@ func defaultKeyMap() keyMap {
 		Search:    key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "search")),
 		MarkRead:  key.NewBinding(key.WithKeys("m"), key.WithHelp("m", "mark read")),
 		Undo:      key.NewBinding(key.WithKeys("u"), key.WithHelp("u", "undo")),
+		Repeat:    key.NewBinding(key.WithKeys("."), key.WithHelp(".", "repeat")),
 		PageUp:    key.NewBinding(key.WithKeys("pgup"), key.WithHelp("pgup", "page up")),
 		PageDown:  key.NewBinding(key.WithKeys("pgdown"), key.WithHelp("pgdn", "page down")),
 		HalfUp:    key.NewBinding(key.WithKeys("ctrl+u"), key.WithHelp("ctrl+u", "half up")),

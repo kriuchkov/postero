@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
@@ -89,7 +90,8 @@ func renderList(m Model, width, height int) string {
 		renderedItems = append(renderedItems, card)
 		renderedHeight += cardHeight
 	}
-	if loadingRow, loadingHeight := renderListLoadingRow(m, contentWidth); loadingRow != "" && renderedHeight+loadingHeight <= availableItemsHeight {
+	if loadingRow, loadingHeight := renderListLoadingRow(m, contentWidth); loadingRow != "" &&
+		renderedHeight+loadingHeight <= availableItemsHeight {
 		renderedItems = append(renderedItems, loadingRow)
 	}
 

@@ -32,9 +32,9 @@ func BuildReply(message *models.Message, options ReplyOptions) Draft {
 		cc = dedupeAddresses(message.Cc, options.Self)
 	}
 
-	body := strings.TrimSpace(options.Body)
-	if body == "" {
-		body = buildQuotedReplyBody(message)
+	body := buildQuotedReplyBody(message)
+	if prefix := strings.TrimSpace(options.Body); prefix != "" {
+		body = strings.TrimRight(prefix, "\n") + body
 	}
 
 	return Draft{

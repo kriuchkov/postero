@@ -7,9 +7,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/kriuchkov/postero/internal/core/models"
 )
 
 func TestViewRendersMessageContent(t *testing.T) {
@@ -687,6 +688,42 @@ func TestRenderFooterShowsCommandLineAtBottom(t *testing.T) {
 	assert.NotContains(t, footer, "esc cancel")
 }
 
+func TestCommandFooterHelpShowsExpandedPalette(t *testing.T) {
+	m := testModel()
+	m.commandActive = true
+
+	candidates := footerHelpCandidates(m)
+	require.NotEmpty(t, candidates)
+	assert.Contains(t, candidates[0], "compose-ai reply-ai reply-all-ai")
+	assert.Contains(t, candidates[0], "archive trash spam refresh help quit")
+}
+
+func TestComposeFooterHelpMentionsCommandPalette(t *testing.T) {
+	m := testModel()
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 2)
+
+	candidates := footerHelpCandidates(m)
+	require.NotEmpty(t, candidates)
+	assert.Contains(t, candidates[0], ": cmd")
+}
+
+func TestHeaderAndFooterShowAILoadingBadge(t *testing.T) {
+	m := testModel()
+	m.width = 120
+	m.height = 40
+	m.state = stateList
+	m.aiGenerating = true
+	m.aiLoadingFrame = 2
+	m.aiLoadingLabel = "AI reply"
+
+	header := renderHeader(m, m.width)
+	footer := renderFooter(m, m.width)
+
+	assert.Contains(t, header, "AI reply")
+	assert.Contains(t, footer, "AI reply")
+	assert.Contains(t, footer, "|")
+}
+
 func TestViewShowsUndoActionWhenPending(t *testing.T) {
 	m := testModel()
 	m.width = 120
@@ -696,6 +733,19 @@ func TestViewShowsUndoActionWhenPending(t *testing.T) {
 	view := m.View()
 
 	assert.Contains(t, view, "u Undo")
+}
+
+func TestViewShowsRepeatActionWhenAvailable(t *testing.T) {
+	m := testModel()
+	m.width = 120
+	m.height = 40
+	m.state = stateList
+	m.lastAction = repeatableActionArchive
+
+	view := m.View()
+
+	assert.Contains(t, view, ". Repeat")
+	assert.Contains(t, view, "a/!/d • .")
 }
 
 func TestViewShowsActiveAccountScopeInHeader(t *testing.T) {

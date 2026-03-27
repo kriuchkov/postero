@@ -14,8 +14,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/stretchr/testify/require"
+
+	"github.com/kriuchkov/postero/internal/core/models"
 )
 
 type messageServiceStub struct {
@@ -40,6 +41,23 @@ type messageServiceStub struct {
 	lastSearch        models.SearchCriteria
 	composedDraftID   string
 	updatedDraftCall  *models.UpdateMessageRequest
+}
+
+type draftAssistantStub struct {
+	response *models.GeneratedDraft
+	err      error
+	requests []models.GenerateDraftRequest
+}
+
+func (s *draftAssistantStub) GenerateDraft(_ context.Context, request models.GenerateDraftRequest) (*models.GeneratedDraft, error) {
+	s.requests = append(s.requests, request)
+	if s.err != nil {
+		return nil, s.err
+	}
+	if s.response == nil {
+		return &models.GeneratedDraft{}, nil
+	}
+	return &models.GeneratedDraft{Subject: s.response.Subject, Body: s.response.Body}, nil
 }
 
 type updateDraftCall struct {
@@ -264,6 +282,7 @@ func testModelWithService(service *messageServiceStub) Model {
 		sidebarItems:     []string{"Inbox", "Sent", "Drafts", "Archive", "Trash", "Spam"},
 		sidebarCursor:    0,
 		service:          service,
+		assistant:        nil,
 		allMessages:      messages,
 		sidebarTagSource: append([]*models.Message{}, messages...),
 		messages:         messages,

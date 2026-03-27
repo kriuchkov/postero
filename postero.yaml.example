@@ -26,6 +26,51 @@ tui:
   # Spinner frame interval for loading indicators, in milliseconds.
   loading_tick_ms: 120
 
+ai:
+  default_compose_template: "compose-default"
+  default_reply_template: "reply-default"
+  providers:
+    openai:
+      type: "openai"
+      model: "gpt-4.1-mini"
+      # Prefer setting secrets through env vars, for example:
+      # POSTERO_AI_PROVIDERS_OPENAI_API_KEY=...
+    gemini:
+      type: "gemini"
+      model: "gemini-2.5-flash"
+      # POSTERO_AI_PROVIDERS_GEMINI_API_KEY=...
+  templates:
+    compose-default:
+      mode: "compose"
+      provider: "openai"
+      temperature: 0.4
+      system_prompt: |
+        You write concise, practical email drafts.
+        Return JSON only with keys "subject" and "body".
+      prompt: |
+        Draft a new email.
+        Instruction: {{ .Instruction }}
+        From: {{ .From }}
+        To: {{ join .To ", " }}
+        Cc: {{ join .Cc ", " }}
+        Subject hint: {{ .Subject }}
+        Body hint: {{ .Body }}
+    reply-default:
+      mode: "reply"
+      provider: "gemini"
+      temperature: 0.2
+      system_prompt: |
+        You write careful email replies.
+        Return JSON only with keys "subject" and "body".
+      prompt: |
+        Draft a reply.
+        Instruction: {{ .Instruction }}
+        Reply all: {{ .ReplyAll }}
+        Original subject: {{ .Original.Subject }}
+        Original from: {{ .Original.From }}
+        Original body:
+        {{ .Original.Body }}
+
 # Filters allow you to process rendering of specific MIME types
 # Make sure to install the binaries (e.g., w3m) used in the commands
 filters:

@@ -7,9 +7,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/kriuchkov/postero/internal/core/models"
 )
 
 func TestComposeKeyEntersComposeState(t *testing.T) {
@@ -783,6 +784,32 @@ func TestCommandPromptTabCompletesKnownCommands(t *testing.T) {
 	assert.Equal(t, "drafts", updated.searchInput.Value())
 }
 
+func TestCommandPromptTabCompletesExtendedCommands(t *testing.T) {
+	m := testModel()
+	m.openCommandPrompt()
+	m.searchInput.SetValue("ar")
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "archive", updated.searchInput.Value())
+
+	updated.searchInput.SetValue("he")
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "help", updated.searchInput.Value())
+}
+
+func TestCommandPromptTabCompletesAICommands(t *testing.T) {
+	m := testModel()
+	m.openCommandPrompt()
+	m.searchInput.SetValue("compose-a")
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "compose-ai", updated.searchInput.Value())
+
+	updated.searchInput.SetValue("reply-all-a")
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyTab})
+	assert.Equal(t, "reply-all-ai", updated.searchInput.Value())
+}
+
 func TestCommandPromptTabCompletesEmptyToFirstCommand(t *testing.T) {
 	m := testModel()
 	m.openCommandPrompt()
@@ -806,6 +833,181 @@ func TestComposeOAndOOpenBodyInNormalMode(t *testing.T) {
 	updated = updateModel(t, updated, keyRune('O'))
 	assert.True(t, updated.composeEditing)
 	assert.Equal(t, 3, updated.focusIndex)
+}
+
+func TestComposeGJumpsToLastField(t *testing.T) {
+	m := testModel()
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+
+	updated := updateModel(t, m, keyRune('G'))
+
+	assert.Equal(t, 3, updated.focusIndex)
+	assert.False(t, updated.composeEditing)
+}
+
+func TestComposeCommandRefusesToReplaceDirtyDraft(t *testing.T) {
+	m := testModel()
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
+	m.activeDraft.Body = "Body\nchanged"
+
+	updated := updateModel(t, m, keyRune(':'))
+	require.True(t, updated.commandActive)
+	updated.searchInput.SetValue("compose")
+
+	updatedAny, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	run := updatedAny.(Model)
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, stateCompose, run.state)
+	require.NotNil(t, run.activeDraft)
+	assert.Equal(t, "Body\nchanged", run.activeDraft.Body)
+	assert.Equal(t, "Unsaved draft. Save, send, or cancel before leaving compose", run.statusMessage)
+	assert.True(t, run.statusError)
+}
+
+func TestComposeAICommandUsesAssistantAndOpensCompose(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	assistant := &draftAssistantStub{response: &models.GeneratedDraft{Subject: "Kickoff", Body: "Here is a concise kickoff draft."}}
+	m := testModelWithService(service)
+	m.assistant = assistant
+
+	m.openCommandPrompt()
+	m.searchInput.SetValue("compose-ai --template compose-default Draft a kickoff note")
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.Equal(t, "Generating AI draft...", updated.statusMessage)
+	assert.True(t, updated.aiGenerating)
+	assert.Equal(t, "AI draft", updated.aiLoadingLabel)
+
+	updated = updateModel(t, updated, cmd())
+	require.Len(t, assistant.requests, 1)
+	assert.Equal(t, "compose", assistant.requests[0].Mode)
+	assert.Equal(t, "compose-default", assistant.requests[0].Template)
+	assert.Equal(t, "Draft a kickoff note", assistant.requests[0].Instruction)
+	assert.Equal(t, stateCompose, updated.state)
+	require.NotNil(t, updated.activeDraft)
+	assert.Equal(t, "Kickoff", updated.activeDraft.Subject)
+	assert.Equal(t, "Here is a concise kickoff draft.", updated.activeDraft.Body)
+	assert.Equal(t, "AI Compose", updated.composeTitle)
+	assert.True(t, updated.composeEditing)
+	assert.False(t, updated.aiGenerating)
+	assert.Equal(t, "AI draft ready", updated.statusMessage)
+}
+
+func TestReplyAICommandUsesSelectedMessageAndOpensReplyDraft(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	assistant := &draftAssistantStub{response: &models.GeneratedDraft{Subject: "Re: Subject 1", Body: "Thanks, this works for us."}}
+	m := testModelWithService(service)
+	m.assistant = assistant
+	m.state = stateList
+
+	m.openCommandPrompt()
+	m.searchInput.SetValue("reply-ai Accept and confirm")
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.Equal(t, "Generating AI reply...", updated.statusMessage)
+
+	updated = updateModel(t, updated, cmd())
+	require.Len(t, assistant.requests, 1)
+	assert.Equal(t, "reply", assistant.requests[0].Mode)
+	assert.Equal(t, "Accept and confirm", assistant.requests[0].Instruction)
+	require.NotNil(t, assistant.requests[0].Original)
+	assert.Equal(t, "msg-1", assistant.requests[0].Original.ID)
+	assert.Equal(t, stateCompose, updated.state)
+	require.NotNil(t, updated.activeDraft)
+	assert.Equal(t, "AI Reply", updated.composeTitle)
+	assert.Contains(t, updated.activeDraft.Body, "Thanks, this works for us.")
+	assert.Contains(t, updated.activeDraft.Body, "wrote:")
+	assert.True(t, updated.composeEditing)
+	assert.Equal(t, "AI reply ready", updated.statusMessage)
+}
+
+func TestReplyAICommandAcceptsTemplateFlag(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	assistant := &draftAssistantStub{response: &models.GeneratedDraft{Subject: "Re: Subject 1", Body: "Confirmed."}}
+	m := testModelWithService(service)
+	m.assistant = assistant
+	m.state = stateList
+
+	m.openCommandPrompt()
+	m.searchInput.SetValue("reply-ai --template reply-default Accept and confirm")
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+	assert.True(t, updated.aiGenerating)
+
+	updated = updateModel(t, updated, cmd())
+	require.Len(t, assistant.requests, 1)
+	assert.Equal(t, "reply-default", assistant.requests[0].Template)
+	assert.Equal(t, "Accept and confirm", assistant.requests[0].Instruction)
+	assert.False(t, updated.aiGenerating)
+}
+
+func TestComposeAICommandRejectsMissingTemplateValue(t *testing.T) {
+	m := testModel()
+	m.assistant = &draftAssistantStub{response: &models.GeneratedDraft{Body: "draft"}}
+	m.openCommandPrompt()
+	m.searchInput.SetValue("compose-ai --template")
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+
+	assert.Nil(t, cmd)
+	assert.True(t, updated.statusError)
+	assert.Equal(t, "template name is required after --template", updated.statusMessage)
+	assert.False(t, updated.aiGenerating)
+}
+
+func TestReplyAICommandRequiresSelection(t *testing.T) {
+	assistant := &draftAssistantStub{response: &models.GeneratedDraft{Body: "Thanks"}}
+	m := testModel()
+	m.assistant = assistant
+	m.messages = nil
+	m.state = stateList
+	m.openCommandPrompt()
+	m.searchInput.SetValue("reply-ai")
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	require.NotNil(t, cmd)
+
+	updated = updateModel(t, updated, cmd())
+	assert.True(t, updated.statusError)
+	assert.Equal(t, "Select a message before generating an AI reply", updated.statusMessage)
+}
+
+func TestCountPrefixMovesListSelectionAndTargetsWithGGMotions(t *testing.T) {
+	service := &messageServiceStub{inbox: pagedInboxMessages(8)}
+	m := testModelWithService(service)
+	m.messages = pagedInboxMessages(8)
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune('5'))
+	updated = updateModel(t, updated, keyRune('j'))
+	assert.Equal(t, 5, updated.listCursor)
+
+	updated = updateModel(t, updated, keyRune('3'))
+	updated = updateModel(t, updated, keyRune('g'))
+	updated = updateModel(t, updated, keyRune('g'))
+	assert.Equal(t, 2, updated.listCursor)
+
+	updated = updateModel(t, updated, keyRune('6'))
+	updated = updateModel(t, updated, keyRune('G'))
+	assert.Equal(t, 5, updated.listCursor)
+}
+
+func TestCountPrefixMovesComposeFields(t *testing.T) {
+	m := testModel()
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 0)
+
+	updated := updateModel(t, m, keyRune('2'))
+	updated = updateModel(t, updated, keyRune('j'))
+	assert.Equal(t, 2, updated.focusIndex)
+
+	updated = updateModel(t, updated, keyRune('3'))
+	updated = updateModel(t, updated, keyRune('g'))
+	updated = updateModel(t, updated, keyRune('g'))
+	assert.Equal(t, 2, updated.focusIndex)
 }
 
 func TestDeleteKeyTogglesDeleteAndRefreshesMessages(t *testing.T) {
@@ -1062,6 +1264,57 @@ func TestArchiveKeyArchivesMessageAndRefreshesMessages(t *testing.T) {
 	assert.NotEmpty(t, reloaded.messages)
 	assert.Equal(t, "Message archived. Press u to undo", updated.statusMessage)
 	assert.False(t, updated.statusError)
+}
+
+func TestCountPrefixArchivesMultipleMessagesAndUndoRestoresBatch(t *testing.T) {
+	service := &messageServiceStub{inbox: pagedInboxMessages(5)}
+	m := testModelWithService(service)
+	m.messages = append([]*models.Message{}, service.inbox...)
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune('2'))
+	updatedAny, fetchCmd := updated.Update(keyRune('a'))
+	updated = updatedAny.(Model)
+
+	require.NotNil(t, fetchCmd)
+	assert.Equal(t, []string{"msg-001", "msg-002"}, service.archiveCalls)
+	assert.Equal(t, "2 messages archived. Press u to undo", updated.statusMessage)
+
+	reloaded := updateModel(t, updated, fetchCmd())
+	require.NotNil(t, reloaded.pendingUndo)
+	require.Len(t, reloaded.pendingUndo.snapshots(), 2)
+	require.Len(t, reloaded.messages, 3)
+
+	undoneAny, undoFetchCmd := reloaded.Update(keyRune('u'))
+	undone := undoneAny.(Model)
+	require.NotNil(t, undoFetchCmd)
+	restored := updateModel(t, undone, undoFetchCmd())
+
+	assert.Equal(t, "Undo applied", undone.statusMessage)
+	assert.Len(t, restored.messages, 5)
+	assert.Contains(t, restored.messages[0].Labels, "inbox")
+	assert.Contains(t, restored.messages[1].Labels, "inbox")
+}
+
+func TestDotRepeatsLastArchiveAction(t *testing.T) {
+	service := &messageServiceStub{inbox: pagedInboxMessages(4)}
+	m := testModelWithService(service)
+	m.messages = append([]*models.Message{}, service.inbox...)
+	m.state = stateList
+
+	firstAny, firstFetchCmd := m.Update(keyRune('a'))
+	first := firstAny.(Model)
+	require.NotNil(t, firstFetchCmd)
+	first = updateModel(t, first, firstFetchCmd())
+
+	repeatedAny, repeatFetchCmd := first.Update(keyRune('.'))
+	repeated := repeatedAny.(Model)
+	require.NotNil(t, repeatFetchCmd)
+	_ = updateModel(t, repeated, repeatFetchCmd())
+
+	assert.Equal(t, []string{"msg-001", "msg-002"}, service.archiveCalls)
+	assert.Equal(t, repeatableActionArchive, repeated.lastAction)
+	assert.Equal(t, "Message archived. Press u to undo", repeated.statusMessage)
 }
 
 func TestSpamKeyMarksMessageAsSpamAndRefreshesMessages(t *testing.T) {

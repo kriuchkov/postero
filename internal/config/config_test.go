@@ -89,6 +89,47 @@ func TestLoadConfigAppliesTUIEnvOverrides(t *testing.T) {
 	assert.Equal(t, 95, cfg.TUI.LoadingTickMS)
 }
 
+func TestLoadConfigAppliesAIDefaults(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+
+	configDir := t.TempDir()
+	t.Setenv("POSTERO_CONFIG_DIR", configDir)
+
+	configFile := filepath.Join(configDir, "config.yaml")
+	content := []byte(`ai:
+  default_compose_template: "compose-default"
+  default_reply_template: "reply-default"
+  providers:
+    openai:
+      model: "gpt-4.1-mini"
+    gemini:
+      type: "gemini"
+      model: "gemini-2.5-flash"
+  templates:
+    compose-default:
+      mode: "compose"
+      provider: "openai"
+      prompt: "Compose"
+    reply-default:
+      mode: "reply"
+      provider: "gemini"
+      prompt: "Reply"
+`)
+	require.NoError(t, os.WriteFile(configFile, content, 0o644))
+
+	cfg, err := LoadConfig()
+	require.NoError(t, err)
+
+	assert.Equal(t, "compose-default", cfg.AI.DefaultComposeTemplate)
+	assert.Equal(t, "reply-default", cfg.AI.DefaultReplyTemplate)
+	assert.Equal(t, "openai", cfg.AI.Providers["openai"].Type)
+	assert.Equal(t, "https://api.openai.com/v1", cfg.AI.Providers["openai"].BaseURL)
+	assert.Equal(t, "https://generativelanguage.googleapis.com/v1beta", cfg.AI.Providers["gemini"].BaseURL)
+	assert.Equal(t, "reply", cfg.AI.Templates["reply-default"].Mode)
+	assert.Equal(t, "gemini", cfg.AI.Templates["reply-default"].Provider)
+}
+
 func TestLoadConfigAppliesProtocolCredentials(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)

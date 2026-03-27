@@ -6,6 +6,16 @@ import (
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
+// DraftAssistant defines AI-assisted draft generation.
+type DraftAssistant interface {
+	GenerateDraft(ctx context.Context, request models.GenerateDraftRequest) (*models.GeneratedDraft, error)
+}
+
+// PromptCompletionProvider defines a provider-neutral text completion boundary.
+type PromptCompletionProvider interface {
+	CompletePrompt(ctx context.Context, request models.PromptCompletionRequest) (string, error)
+}
+
 // MessageRepository defines the interface for message persistence
 type MessageRepository interface {
 	// GetByID retrieves a message by its ID

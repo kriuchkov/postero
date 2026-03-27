@@ -18,6 +18,7 @@ import (
 	goimap "github.com/emersion/go-imap"
 	imapclient "github.com/emersion/go-imap/client"
 	"github.com/go-faster/errors"
+
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
 )

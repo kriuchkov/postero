@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/kriuchkov/postero/internal/core/models"
 )
 
 func TestBuildReplyReplyAllDedupesSelf(t *testing.T) {
@@ -25,6 +26,22 @@ func TestBuildReplyReplyAllDedupesSelf(t *testing.T) {
 	assert.Equal(t, []string{"<carol@example.com>"}, draft.Cc)
 	assert.Equal(t, "Re: Status Update", draft.Subject)
 	assert.Contains(t, draft.Body, "On Fri, 20 Mar 2026 10:00:00 +0000, Alice <alice@example.com> wrote:")
+	assert.Contains(t, draft.Body, "> hello")
+	assert.Contains(t, draft.Body, "> world")
+}
+
+func TestBuildReplyAppendsQuotedOriginalWhenBodyProvided(t *testing.T) {
+	message := &models.Message{
+		ID:      "msg-2",
+		Subject: "Question",
+		From:    "Alice <alice@example.com>",
+		Body:    "hello\nworld",
+		Date:    time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
+	}
+
+	draft := BuildReply(message, ReplyOptions{Body: "Thanks for the update."})
+
+	assert.Contains(t, draft.Body, "Thanks for the update.\n\nOn Fri, 20 Mar 2026 10:00:00 +0000, Alice <alice@example.com> wrote:")
 	assert.Contains(t, draft.Body, "> hello")
 	assert.Contains(t, draft.Body, "> world")
 }

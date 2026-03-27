@@ -52,6 +52,14 @@ func renderFooter(m Model, width int) string {
 			badge,
 		)
 	}
+	if badge := footerAILoadingBadge(m); badge != "" {
+		statusText = lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			statusText,
+			lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Render("  •  "),
+			badge,
+		)
+	}
 	if loading := footerLoadingBadge(m); loading != "" {
 		statusText = lipgloss.JoinHorizontal(
 			lipgloss.Left,
@@ -80,6 +88,23 @@ func footerSearchModeBadge(m Model) string {
 		Background(m.styles.Palette.Faint).
 		Padding(0, 1).
 		Render(label)
+}
+
+func footerAILoadingBadge(m Model) string {
+	if !m.aiGenerating || m.commandActive {
+		return ""
+	}
+	label := strings.TrimSpace(m.aiLoadingLabel)
+	if label == "" {
+		label = "AI"
+	}
+	frame := loadingFrames[m.aiLoadingFrame%len(loadingFrames)]
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.styles.Palette.Highlight).
+		Background(m.styles.Palette.Primary).
+		Padding(0, 1).
+		Render(frame + " " + label)
 }
 
 func footerLoadingBadge(m Model) string {
@@ -137,10 +162,7 @@ func footerHelpCandidates(m Model) []string {
 	}
 
 	if m.commandActive {
-		return []string{
-			"enter run • esc cancel • try compose inbox drafts refresh quit",
-			"enter run • esc cancel • compose inbox quit",
-		}
+		return commandPromptHelpCandidates()
 	}
 
 	if m.searchActive {
@@ -158,6 +180,7 @@ func footerHelpCandidates(m Model) []string {
 	canScroll := m.state == stateContent
 	canMessageActions := hasSelection && (m.state == stateList || m.state == stateContent)
 	canUndo := m.pendingUndo != nil
+	canRepeat := canMessageActions && m.lastAction != repeatableActionNone
 	clearScope := footerClearScopeHint(m)
 
 	switch m.state {
@@ -193,6 +216,7 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(hasSelection, "ctrl+d/u"),
 			footerIf(canMessageActions, "r/R/f"),
 			footerIf(canMessageActions, "a/!/d"),
+			footerIf(canRepeat, ". repeat"),
 			footerIf(canUndo, "u undo"),
 			"/ search",
 			": commands",
@@ -207,6 +231,7 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(hasSelection, "ctrl+d/u"),
 			footerIf(canMessageActions, "r/f"),
 			footerIf(canMessageActions, "a/!/d"),
+			footerIf(canRepeat, "."),
 			footerIf(canUndo, "u"),
 			"/",
 			": cmd",
@@ -220,6 +245,7 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(hasSelection, "ctrl+d/u"),
 			footerIf(canMessageActions, "r/f"),
 			footerIf(canMessageActions, "d"),
+			footerIf(canRepeat, "."),
 			"/",
 		)
 		return []string{long, short, compact}
@@ -232,6 +258,7 @@ func footerHelpCandidates(m Model) []string {
 			"h back",
 			footerIf(canMessageActions, "r/R/f"),
 			footerIf(canMessageActions, "a/!/d"),
+			footerIf(canRepeat, ". repeat"),
 			footerIf(canUndo, "u undo"),
 			"/ search",
 			": commands",
@@ -244,6 +271,7 @@ func footerHelpCandidates(m Model) []string {
 			"h",
 			footerIf(canMessageActions, "r/f"),
 			footerIf(canMessageActions, "a/!/d"),
+			footerIf(canRepeat, "."),
 			footerIf(canUndo, "u"),
 			"/",
 			": cmd",
@@ -255,6 +283,7 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(hasSelection, "ctrl+d/u"),
 			"h",
 			footerIf(canMessageActions, "r/f"),
+			footerIf(canRepeat, "."),
 		)
 		return []string{long, short, compact}
 	case stateCompose:
@@ -359,21 +388,21 @@ func composeFooterHelpCandidates(m Model) []string {
 	switch m.focusIndex {
 	case 0:
 		return []string{
-			"h/l acct • enter next • j/k fields • tab next • gg/G • 0/$ • ctrl+o save • ctrl+x send",
-			"h/l acct • enter next • j/k • gg/G • 0/$ • ctrl+o save • ctrl+x send",
-			"h/l acct • enter • j/k • ctrl+o save • ctrl+x send",
+			"h/l acct • enter next • j/k fields • tab next • gg/G • 0/$ • : cmd • ctrl+o save • ctrl+x send",
+			"h/l acct • enter next • j/k • gg/G • 0/$ • : cmd • ctrl+o save • ctrl+x send",
+			"h/l acct • enter • j/k • : cmd • ctrl+o save • ctrl+x send",
 		}
 	case 3:
 		return []string{
-			"o/O body • enter edit • j/k fields • tab next • gg/G • 0/$ • ctrl+o save • ctrl+x send",
-			"o/O body • enter edit • j/k • gg/G • 0/$ • ctrl+o save • ctrl+x send",
-			"o/O body • enter • j/k • ctrl+o save • ctrl+x send",
+			"o/O body • enter edit • j/k fields • tab next • gg/G • 0/$ • : cmd • ctrl+o save • ctrl+x send",
+			"o/O body • enter edit • j/k • gg/G • 0/$ • : cmd • ctrl+o save • ctrl+x send",
+			"o/O body • enter • j/k • : cmd • ctrl+o save • ctrl+x send",
 		}
 	default:
 		return []string{
-			"enter/i edit • j/k fields • o/O body • tab next • gg/G • 0/$ • ctrl+o save • ctrl+x send",
-			"enter/i edit • j/k • o/O body • gg/G • 0/$ • ctrl+o save • ctrl+x send",
-			"enter/i edit • j/k • ctrl+o save • ctrl+x send",
+			"enter/i edit • j/k fields • o/O body • tab next • gg/G • 0/$ • : cmd • ctrl+o save • ctrl+x send",
+			"enter/i edit • j/k • o/O body • gg/G • 0/$ • : cmd • ctrl+o save • ctrl+x send",
+			"enter/i edit • j/k • : cmd • ctrl+o save • ctrl+x send",
 		}
 	}
 }
@@ -385,7 +414,7 @@ func composeEditingFooterHelpCandidates(m Model) []string {
 	}
 
 	return []string{
-		"esc normal • enter " + enterAction + " • ctrl+o save • ctrl+x send",
-		"esc normal • ctrl+o save • ctrl+x send",
+		"esc normal • enter " + enterAction + " • : cmd • ctrl+o save • ctrl+x send",
+		"esc normal • : cmd • ctrl+o save • ctrl+x send",
 	}
 }

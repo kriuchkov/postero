@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
@@ -35,8 +36,29 @@ func (m *Model) applySearchInputStyles(commandMode bool) {
 }
 
 func commandPromptCandidates() []string {
-	return []string{"compose", "inbox", "drafts", "refresh", "quit"}
+	return []string{"compose", "compose-ai", "reply-ai", "reply-all-ai", "inbox", "sent", "drafts", "archive", "trash", "spam", "refresh", "help", "quit"}
 }
+
+func commandPromptPlaceholder() string {
+	return strings.Join(commandPromptCandidates(), " | ")
+}
+
+func commandPromptHelpCandidates() []string {
+	return []string{
+		"enter run • esc cancel • try compose compose-ai reply-ai reply-all-ai inbox sent drafts archive trash spam refresh help quit",
+		"enter run • esc cancel • compose compose-ai reply-ai inbox archive help quit",
+	}
+}
+
+type repeatableAction string
+
+const (
+	repeatableActionNone    repeatableAction = ""
+	repeatableActionTrash   repeatableAction = "trash"
+	repeatableActionDelete  repeatableAction = "delete"
+	repeatableActionArchive repeatableAction = "archive"
+	repeatableActionSpam    repeatableAction = "spam"
+)
 
 type messagesLoadedMsg struct {
 	messages        []*models.Message
@@ -52,9 +74,23 @@ type messagesLoadedMsg struct {
 
 type undoState struct {
 	message   *models.Message
+	messages  []*models.Message
 	action    string
 	token     int
 	expiresAt time.Time
+}
+
+func (u *undoState) snapshots() []*models.Message {
+	if u == nil {
+		return nil
+	}
+	if len(u.messages) > 0 {
+		return u.messages
+	}
+	if u.message != nil {
+		return []*models.Message{u.message}
+	}
+	return nil
 }
 
 type undoExpiredMsg struct {
@@ -62,6 +98,11 @@ type undoExpiredMsg struct {
 }
 
 type loadingTickMsg struct {
+	token int
+	frame int
+}
+
+type aiLoadingTickMsg struct {
 	token int
 	frame int
 }
@@ -146,6 +187,40 @@ func (m Model) loadingTickCmd() tea.Cmd {
 	token := m.loadingToken
 	return tea.Tick(m.loadingTickInterval(), func(time.Time) tea.Msg {
 		return loadingTickMsg{token: token, frame: nextFrame}
+	})
+}
+
+func (m *Model) prepareAIGeneration(label string) {
+	m.aiGenerating = true
+	m.aiLoadingFrame = 0
+	m.aiLoadingLabel = strings.TrimSpace(label)
+	m.aiLoadingToken++
+}
+
+func (m *Model) finishAIGeneration() {
+	m.aiGenerating = false
+	m.aiLoadingFrame = 0
+	m.aiLoadingLabel = ""
+}
+
+func (m Model) withAILoadingIndicator(cmd tea.Cmd) tea.Cmd {
+	if cmd == nil {
+		return nil
+	}
+	if !m.aiGenerating {
+		return cmd
+	}
+	return tea.Batch(m.aiLoadingTickCmd(), cmd)
+}
+
+func (m Model) aiLoadingTickCmd() tea.Cmd {
+	if !m.aiGenerating {
+		return nil
+	}
+	nextFrame := (m.aiLoadingFrame + 1) % len(loadingFrames)
+	token := m.aiLoadingToken
+	return tea.Tick(m.loadingTickInterval(), func(time.Time) tea.Msg {
+		return aiLoadingTickMsg{token: token, frame: nextFrame}
 	})
 }
 

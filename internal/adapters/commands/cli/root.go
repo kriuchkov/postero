@@ -1,8 +1,9 @@
 package cli
 
 import (
-	"github.com/kriuchkov/postero/internal/adapters/ui/tui"
 	"github.com/spf13/cobra"
+
+	"github.com/kriuchkov/postero/internal/adapters/ui/tui"
 )
 
 // rootCmd represents the base command when called without any subcommands
