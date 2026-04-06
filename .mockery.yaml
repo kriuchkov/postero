@@ -1,0 +1,6 @@
+output: ./internal/core/ports/mocks
+
+packages:
+  github.com/kriuchkov/postero/internal/core/ports:
+    interfaces:
+      MessageRepository:

@@ -1,0 +1,32 @@
+version: 2
+
+builds:
+  - id: pstr
+    main: ./cmd/pstr
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+    builds:
+      - pstr
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Prerelease }}-{{ .Prerelease }}{{ end }}
+
+release:
+  draft: false
+  prerelease: auto

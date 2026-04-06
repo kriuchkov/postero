@@ -1,0 +1,80 @@
+accounts:
+  - name: "personal"
+    provider: "gmail"
+    email: "user@example.com"
+    username: "user@example.com"
+    oauth2:
+      client_id: "your-client-id"
+      client_secret: "your-client-secret"
+    imap:
+      # password: "imap-app-password"
+      # password_cmd: ["pass", "show", "email/personal-imap"]
+    smtp:
+      # password: "smtp-app-password"
+      # password_cmd: ["pass", "show", "email/personal-smtp"]
+    # Shared fallback when both protocols use the same secret.
+    # password: "shared-app-password"
+    # password_cmd: ["pass", "show", "email/personal"]
+
+data_path: "~/.local/share/postero"
+
+tui:
+  # Number of messages fetched per page in the interactive list.
+  list_page_size: 30
+  # How close the cursor should get to the bottom before fetching the next page.
+  list_prefetch_ahead: 5
+  # Spinner frame interval for loading indicators, in milliseconds.
+  loading_tick_ms: 120
+
+ai:
+  default_compose_template: "compose-default"
+  default_reply_template: "reply-default"
+  providers:
+    openai:
+      type: "openai"
+      model: "gpt-4.1-mini"
+      # Prefer setting secrets through env vars, for example:
+      # POSTERO_AI_PROVIDERS_OPENAI_API_KEY=...
+    gemini:
+      type: "gemini"
+      model: "gemini-2.5-flash"
+      # POSTERO_AI_PROVIDERS_GEMINI_API_KEY=...
+  templates:
+    compose-default:
+      mode: "compose"
+      provider: "openai"
+      temperature: 0.4
+      system_prompt: |
+        You write concise, practical email drafts.
+        Return JSON only with keys "subject" and "body".
+      prompt: |
+        Draft a new email.
+        Instruction: {{ .Instruction }}
+        From: {{ .From }}
+        To: {{ join .To ", " }}
+        Cc: {{ join .Cc ", " }}
+        Subject hint: {{ .Subject }}
+        Body hint: {{ .Body }}
+    reply-default:
+      mode: "reply"
+      provider: "gemini"
+      temperature: 0.2
+      system_prompt: |
+        You write careful email replies.
+        Return JSON only with keys "subject" and "body".
+      prompt: |
+        Draft a reply.
+        Instruction: {{ .Instruction }}
+        Reply all: {{ .ReplyAll }}
+        Original subject: {{ .Original.Subject }}
+        Original from: {{ .Original.From }}
+        Original body:
+        {{ .Original.Body }}
+
+# Filters allow you to process rendering of specific MIME types
+# Make sure to install the binaries (e.g., w3m) used in the commands
+filters:
+  # Render HTML emails safely using w3m:
+  text/html: "w3m -T text/html -dump"
+  # Or use lynx if you prefer:
+  # text/html: "lynx -dump -stdin"
