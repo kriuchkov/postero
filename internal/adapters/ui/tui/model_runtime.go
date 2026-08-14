@@ -35,12 +35,16 @@ func (m *Model) applySearchInputStyles(commandMode bool) {
 	m.searchInput.PlaceholderStyle = lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
 }
 
-func commandPromptCandidates() []string {
-	return []string{"compose", "compose-ai", "reply-ai", "reply-all-ai", "inbox", "sent", "drafts", "archive", "trash", "spam", "refresh", "help", "quit"}
+func (m Model) commandPromptCandidates() []string {
+	if m.state == stateCompose {
+		// Vim-style verbs: :w save, :wq/:x save+close, :q close, :q! discard.
+		return []string{"w", "wq", "x", "q", "q!", "send", "compose-ai", "reply-ai", "reply-all-ai", "help"}
+	}
+	return []string{"compose", "compose-ai", "reply-ai", "reply-all-ai", "inbox", "sent", "drafts", "archive", "trash", "spam", "refresh", "setup", "demo", "help", "quit"}
 }
 
-func commandPromptPlaceholder() string {
-	return strings.Join(commandPromptCandidates(), " | ")
+func (m Model) commandPromptPlaceholder() string {
+	return strings.Join(m.commandPromptCandidates(), " | ")
 }
 
 func commandPromptHelpCandidates() []string {
@@ -110,6 +114,60 @@ type aiLoadingTickMsg struct {
 type searchDebounceMsg struct {
 	token int
 	query string
+}
+
+type syncCompletedMsg struct {
+	count int
+	err   error
+}
+
+type demoSeededMsg struct {
+	count int
+	err   error
+}
+
+// demoSeedCmd loads sample messages into the local store so the app can be
+// explored without a real account.
+func (m Model) demoSeedCmd() tea.Cmd {
+	seeder := m.seeder
+	return func() tea.Msg {
+		if seeder == nil {
+			return demoSeededMsg{}
+		}
+		messages, err := seeder.SeedDemo(context.Background())
+		return demoSeededMsg{count: len(messages), err: err}
+	}
+}
+
+// canSyncAccounts reports whether an IMAP sync is possible for this session.
+func (m Model) canSyncAccounts() bool {
+	return m.syncer != nil && m.config != nil && len(m.config.Accounts) > 0
+}
+
+// syncAccountsCmd pulls new mail from every configured account into the local
+// store; the completion message triggers a normal list reload.
+func (m Model) syncAccountsCmd() tea.Cmd {
+	syncer := m.syncer
+	return func() tea.Msg {
+		if syncer == nil {
+			return syncCompletedMsg{}
+		}
+		messages, err := syncer.SyncAll(context.Background())
+		return syncCompletedMsg{count: len(messages), err: err}
+	}
+}
+
+// refreshMailboxCmd syncs accounts when possible and falls back to a plain
+// local reload otherwise.
+func (m *Model) refreshMailboxCmd() tea.Cmd {
+	if !m.canSyncAccounts() {
+		m.setStatus("Mailbox refreshed")
+		m.prepareFreshMessageFetch()
+		return m.fetchMessages()
+	}
+	m.setStatus("Syncing accounts...")
+	m.prepareFreshMessageFetch()
+	return tea.Batch(m.loadingTickCmd(), m.syncAccountsCmd())
 }
 
 func (m Model) fetchMessages() tea.Cmd {

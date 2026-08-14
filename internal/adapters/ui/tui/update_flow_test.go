@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -84,17 +85,10 @@ func TestEnterAdvancesComposeFocusBeforeBody(t *testing.T) {
 	assert.Equal(t, 1, updated.focusIndex)
 	assert.True(t, updated.composeEditing)
 
-	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, 2, updated.focusIndex)
-	assert.False(t, updated.composeEditing)
-
+	// Enter keeps writing mode active while advancing to the next field.
 	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 2, updated.focusIndex)
 	assert.True(t, updated.composeEditing)
-
-	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEnter})
-	assert.Equal(t, 3, updated.focusIndex)
-	assert.False(t, updated.composeEditing)
 
 	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEnter})
 	assert.Equal(t, 3, updated.focusIndex)
@@ -685,7 +679,7 @@ func TestHMLJumpWithinVisibleListWindow(t *testing.T) {
 	m.listCursor = 5
 
 	topJump := updateModel(t, m, keyRune('H'))
-	assert.Equal(t, 2, topJump.listCursor)
+	assert.Equal(t, 1, topJump.listCursor)
 
 	middleJump := updateModel(t, m, keyRune('M'))
 	assert.Equal(t, 3, middleJump.listCursor)
@@ -1653,4 +1647,746 @@ func TestMessagesLoadedKeepsErrorStatus(t *testing.T) {
 
 	assert.Equal(t, "sync failed", model.statusMessage)
 	assert.True(t, model.statusError)
+}
+
+func TestMarkReadKeyMarksMessageAsReadAndRefreshes(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	require.False(t, m.messages[0].IsRead)
+
+	updated, cmd := updateModelWithCmd(t, m, keyRune('m'))
+
+	assert.Equal(t, []string{"msg-1"}, service.markReadCalls)
+	assert.True(t, updated.messages[0].IsRead)
+	assert.Equal(t, "Message marked as read", updated.statusMessage)
+	assert.False(t, updated.statusError)
+	require.NotNil(t, cmd)
+}
+
+func TestMarkReadKeyDoesNotCallServiceWhenMessageAlreadyRead(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages[0].IsRead = true
+
+	updated, cmd := updateModelWithCmd(t, m, keyRune('m'))
+
+	assert.Empty(t, service.markReadCalls)
+	assert.Equal(t, "Message marked as read", updated.statusMessage)
+	require.NotNil(t, cmd)
+}
+
+func TestRefreshKeyReloadsCurrentMailbox(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.statusMessage = "old status"
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyCtrlR})
+
+	assert.Equal(t, "Mailbox refreshed", updated.statusMessage)
+	assert.False(t, updated.statusError)
+	require.NotNil(t, cmd)
+
+	loaded := updateModel(t, updated, cmd())
+	assert.Len(t, loaded.messages, 2)
+}
+
+func TestWindowSizeMsgSetsWidthAndHeight(t *testing.T) {
+	m := testModel()
+
+	updated := updateModel(t, m, tea.WindowSizeMsg{Width: 180, Height: 50})
+
+	assert.Equal(t, 180, updated.width)
+	assert.Equal(t, 50, updated.height)
+}
+
+func TestDownloadKeyShowsNoAttachmentsStatus(t *testing.T) {
+	m := testModel()
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune('s'))
+
+	assert.Equal(t, "No attachments to save", updated.statusMessage)
+	assert.False(t, updated.statusError)
+}
+
+func TestDownloadKeyShowsSavedStatusWithAttachments(t *testing.T) {
+	service := &messageServiceStub{inbox: []*models.Message{
+		{
+			ID: "att-1", AccountID: "personal", Subject: "Has attachment",
+			From: "sender@example.com", To: []string{"me@example.com"},
+			Labels: []string{"inbox"},
+			Attachments: []*models.Attachment{
+				{Filename: "report.pdf", Size: 2048, MimeType: "application/pdf", Data: []byte("pdf content")},
+				{Filename: "photo.jpg", Size: 1024, MimeType: "image/jpeg", Data: []byte("jpg content")},
+			},
+		},
+	}}
+	tmp := t.TempDir()
+	original := downloadsDir
+	downloadsDir = func() (string, error) { return tmp, nil }
+	t.Cleanup(func() { downloadsDir = original })
+
+	m := testModelWithService(service)
+	m.state = stateList
+
+	updated, cmd := updateModelWithCmd(t, m, keyRune('s'))
+	assert.Equal(t, "Saving attachments…", updated.statusMessage)
+	require.NotNil(t, cmd, "download must run asynchronously")
+
+	done := updateModel(t, updated, cmd())
+	assert.Contains(t, done.statusMessage, "Saved 2 attachment(s)")
+	assert.False(t, done.statusError)
+
+	entries, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	assert.Len(t, entries, 2, "both attachments must be written owner-only")
+	for _, entry := range entries {
+		info, statErr := entry.Info()
+		require.NoError(t, statErr)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "attachments must be 0600")
+	}
+}
+
+func TestQuitCommandFromCommandPromptReturnsQuitCmd(t *testing.T) {
+	m := testModel()
+	m.openCommandPrompt()
+	m.searchInput.SetValue("q")
+
+	updatedAny, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	run := updatedAny.(Model)
+
+	assert.False(t, run.commandActive)
+	require.NotNil(t, cmd)
+	assert.NotNil(t, cmd())
+}
+
+func TestQuitCommandBlockedByDirtyComposeState(t *testing.T) {
+	m := testModel()
+	m.enterComposeState(&models.Message{AccountID: "personal", From: "me@example.com", Subject: "Hello", Body: "Body"}, 1)
+	m.activeDraft.Body = "Body\nchanged"
+
+	updated := updateModel(t, m, keyRune(':'))
+	require.True(t, updated.commandActive)
+	updated.searchInput.SetValue("quit")
+
+	updatedAny, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	run := updatedAny.(Model)
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, stateCompose, run.state)
+	assert.Equal(t, "Unsaved draft. Save, send, or cancel before leaving compose", run.statusMessage)
+	assert.True(t, run.statusError)
+}
+
+func TestSidebarNavigationKeysWinOverTagHotkeys(t *testing.T) {
+	service := &messageServiceStub{inbox: []*models.Message{
+		{ID: "learning-1", AccountID: "personal", Subject: "Course", Labels: []string{"inbox", "learning"}},
+		{ID: "junk-1", AccountID: "personal", Subject: "Junk-ish", Labels: []string{"inbox", "journal"}},
+	}}
+	m := testModelWithService(service)
+	m.allMessages = service.inbox
+	m.sidebarTagSource = service.inbox
+	m.state = stateSidebar
+
+	// l is bound to Right, so it must move focus to the list, not pick the l-tag.
+	updated := updateModel(t, m, keyRune('l'))
+	assert.Empty(t, updated.activeTagID)
+	assert.Equal(t, stateList, updated.state)
+
+	// j is bound to Down, so it must move the sidebar cursor, not pick the j-tag.
+	m.state = stateSidebar
+	updated = updateModel(t, m, keyRune('j'))
+	assert.Empty(t, updated.activeTagID)
+	assert.Equal(t, stateSidebar, updated.state)
+	assert.Equal(t, 1, updated.sidebarCursor)
+}
+
+func TestEscOnUnsavedComposeWarnsBeforeDiscarding(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.enterComposeState(&models.Message{To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"}, 1)
+
+	// Simulate the user editing the draft after opening the composer.
+	m.activeDraft.Body = "Body with new content"
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, stateCompose, updated.state)
+	assert.NotNil(t, updated.activeDraft)
+	assert.Contains(t, updated.statusMessage, "Unsaved draft")
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, stateList, updated.state)
+	assert.Nil(t, updated.activeDraft)
+	assert.Equal(t, "Compose cancelled", updated.statusMessage)
+}
+
+func TestNonEscKeyDisarmsComposeDiscard(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.enterComposeState(&models.Message{To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"}, 1)
+	m.activeDraft.Body = "Body with new content"
+
+	updated := updateModel(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Contains(t, updated.statusMessage, "Unsaved draft")
+
+	// Any other key keeps composing and disarms the pending discard.
+	updated = updateModel(t, updated, keyRune('j'))
+	assert.Equal(t, stateCompose, updated.state)
+	assert.False(t, updated.composeDiscardArmed)
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyEsc})
+	assert.Equal(t, stateCompose, updated.state, "first esc after disarm must warn again")
+	assert.Contains(t, updated.statusMessage, "Unsaved draft")
+}
+
+func TestGotoChordsSwitchMailbox(t *testing.T) {
+	cases := []struct {
+		key  rune
+		item string
+	}{
+		{'i', "Inbox"},
+		{'s', "Sent"},
+		{'d', "Drafts"},
+		{'a', "Archive"},
+		{'t', "Trash"},
+		{'!', "Spam"},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.key), func(t *testing.T) {
+			service := &messageServiceStub{inbox: sampleMessages()}
+			m := testModelWithService(service)
+			m.state = stateList
+
+			updated := updateModel(t, m, keyRune('g'))
+			assert.Equal(t, "g", updated.pendingMotion)
+
+			updated, cmd := updateModelWithCmd(t, updated, keyRune(tc.key))
+			assert.Equal(t, stateList, updated.state)
+			assert.Equal(t, tc.item, strings.TrimSpace(updated.sidebarItems[updated.sidebarCursor]))
+			assert.Equal(t, "Switched to "+tc.item, updated.statusMessage)
+			assert.Empty(t, updated.pendingMotion)
+			require.NotNil(t, cmd, "goto must reload the list")
+		})
+	}
+}
+
+func TestGotoWorksFromContentState(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateContent
+
+	updated := updateModel(t, m, keyRune('g'))
+	updated, cmd := updateModelWithCmd(t, updated, keyRune('s'))
+
+	assert.Equal(t, stateList, updated.state)
+	assert.Equal(t, "Sent", strings.TrimSpace(updated.sidebarItems[updated.sidebarCursor]))
+	require.NotNil(t, cmd)
+}
+
+func TestGDDoesNotDeleteMessage(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+	before := len(m.messages)
+
+	updated := updateModel(t, m, keyRune('g'))
+	updated = updateModel(t, updated, keyRune('d'))
+
+	assert.Empty(t, service.toggleDeleteCalls, "gd must switch to Drafts, not trash the message")
+	assert.Len(t, m.messages, before)
+	assert.Equal(t, "Drafts", strings.TrimSpace(updated.sidebarItems[updated.sidebarCursor]))
+}
+
+func TestGThenUnknownKeyFallsThrough(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+	m.listCursor = 0
+
+	updated := updateModel(t, m, keyRune('g'))
+	updated = updateModel(t, updated, keyRune('j'))
+
+	assert.Empty(t, updated.pendingMotion)
+	assert.Equal(t, 1, updated.listCursor, "g followed by j must fall through to plain movement")
+}
+
+func TestCountThenGotoDropsCount(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune('3'))
+	updated = updateModel(t, updated, keyRune('g'))
+	updated, cmd := updateModelWithCmd(t, updated, keyRune('i'))
+
+	assert.Equal(t, "Inbox", strings.TrimSpace(updated.sidebarItems[updated.sidebarCursor]))
+	assert.Empty(t, updated.pendingCount)
+	require.NotNil(t, cmd)
+}
+
+func TestStarSearchesBySenderEmail(t *testing.T) {
+	service := &messageServiceStub{inbox: []*models.Message{
+		{ID: "m1", From: "Alice Example <alice@example.com>", Subject: "Hello", Labels: []string{"inbox"}},
+		{ID: "m2", From: "alice@example.com", Subject: "Second", Labels: []string{"inbox"}},
+	}}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+	m.listCursor = 0
+
+	updated, cmd := updateModelWithCmd(t, m, keyRune('*'))
+
+	assert.Equal(t, "alice@example.com", updated.searchQuery)
+	require.NotNil(t, cmd)
+	loaded := updateModel(t, updated, cmd())
+	assert.Contains(t, loaded.statusMessage, "messages from alice@example.com")
+}
+
+func TestHashSearchesBySubjectWithoutRePrefix(t *testing.T) {
+	service := &messageServiceStub{inbox: []*models.Message{
+		{ID: "m1", From: "bob@example.com", Subject: "Re: Fwd: Quarterly report", Labels: []string{"inbox"}},
+	}}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+	m.listCursor = 0
+
+	updated, cmd := updateModelWithCmd(t, m, keyRune('#'))
+
+	assert.Equal(t, "Quarterly report", updated.searchQuery)
+	require.NotNil(t, cmd)
+	loaded := updateModel(t, updated, cmd())
+	assert.Contains(t, loaded.statusMessage, "matching Quarterly report")
+}
+
+func TestYankChordsCopyToClipboard(t *testing.T) {
+	var captured string
+	original := clipboardWriteAll
+	clipboardWriteAll = func(text string) error { captured = text; return nil }
+	t.Cleanup(func() { clipboardWriteAll = original })
+
+	service := &messageServiceStub{inbox: []*models.Message{
+		{ID: "m1", From: "Carol <carol@example.com>", Subject: "Agenda", Body: "Full body text", Labels: []string{"inbox"}},
+	}}
+	newModel := func() Model {
+		m := testModelWithService(service)
+		m.state = stateList
+		m.messages = service.inbox
+		m.listCursor = 0
+		return m
+	}
+
+	m := updateModel(t, newModel(), keyRune('y'))
+	assert.Equal(t, "y", m.pendingMotion)
+	m = updateModel(t, m, keyRune('y'))
+	assert.Equal(t, "Full body text", captured)
+	assert.Equal(t, "Yanked message body", m.statusMessage)
+
+	m = updateModel(t, updateModel(t, newModel(), keyRune('y')), keyRune('s'))
+	assert.Equal(t, "Agenda", captured)
+	assert.Equal(t, "Yanked subject", m.statusMessage)
+
+	m = updateModel(t, updateModel(t, newModel(), keyRune('y')), keyRune('f'))
+	assert.Equal(t, "carol@example.com", captured)
+	assert.Equal(t, "Yanked carol@example.com", m.statusMessage)
+}
+
+func TestYankClipboardErrorShowsError(t *testing.T) {
+	original := clipboardWriteAll
+	clipboardWriteAll = func(string) error { return errors.New("no clipboard") }
+	t.Cleanup(func() { clipboardWriteAll = original })
+
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+
+	updated := updateModel(t, m, keyRune('y'))
+	updated = updateModel(t, updated, keyRune('y'))
+
+	assert.True(t, updated.statusError)
+	assert.Equal(t, "Clipboard unavailable", updated.statusMessage)
+}
+
+func TestYankUnknownSuffixFallsThroughToMovement(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+	m.listCursor = 0
+
+	updated := updateModel(t, m, keyRune('y'))
+	updated = updateModel(t, updated, keyRune('j'))
+
+	assert.Empty(t, updated.pendingMotion)
+	assert.Equal(t, 1, updated.listCursor, "y followed by j must fall through to movement")
+}
+
+func TestYankOnEmptyListReportsNothing(t *testing.T) {
+	original := clipboardWriteAll
+	clipboardWriteAll = func(string) error { t.Fatal("clipboard must not be touched"); return nil }
+	t.Cleanup(func() { clipboardWriteAll = original })
+
+	service := &messageServiceStub{}
+	m := testModelWithService(service)
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune('y'))
+	updated = updateModel(t, updated, keyRune('y'))
+
+	assert.Equal(t, "Nothing to yank", updated.statusMessage)
+}
+
+func visualTestMessages() []*models.Message {
+	return []*models.Message{
+		{ID: "v1", AccountID: "personal", Subject: "One", Labels: []string{"inbox"}, IsRead: true},
+		{ID: "v2", AccountID: "personal", Subject: "Two", Labels: []string{"inbox"}, IsRead: true},
+		{ID: "v3", AccountID: "personal", Subject: "Three", Labels: []string{"inbox"}},
+		{ID: "v4", AccountID: "personal", Subject: "Four", Labels: []string{"inbox"}},
+	}
+}
+
+func visualTestModel(service *messageServiceStub) Model {
+	m := testModelWithService(service)
+	m.state = stateList
+	m.messages = service.inbox
+	m.allMessages = service.inbox
+	m.listCursor = 0
+	return m
+}
+
+func TestVisualModeEntersAndHighlightsRange(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+
+	updated := updateModel(t, m, keyRune('V'))
+	assert.True(t, updated.visualActive)
+	assert.Equal(t, 0, updated.visualAnchor)
+
+	updated = updateModel(t, updated, keyRune('j'))
+	updated = updateModel(t, updated, keyRune('j'))
+	assert.Equal(t, 2, updated.listCursor)
+
+	assert.Equal(t, listCursorVisual, currentListCursorMode(updated, 0))
+	assert.Equal(t, listCursorVisual, currentListCursorMode(updated, 1))
+	assert.Equal(t, listCursorActive, currentListCursorMode(updated, 2))
+	assert.Equal(t, listCursorNone, currentListCursorMode(updated, 3))
+}
+
+func TestVisualModeEscVAndQExitWithoutAction(t *testing.T) {
+	for _, exit := range []tea.KeyMsg{{Type: tea.KeyEsc}, keyRune('V'), keyRune('q')} {
+		service := &messageServiceStub{inbox: visualTestMessages()}
+		m := visualTestModel(service)
+
+		updated := updateModel(t, m, keyRune('V'))
+		updated, cmd := updateModelWithCmd(t, updated, exit)
+
+		assert.False(t, updated.visualActive)
+		assert.Nil(t, cmd, "exit must not quit the app or trigger actions")
+		assert.Empty(t, service.toggleDeleteCalls)
+	}
+}
+
+func TestVisualModeDeleteTrashesRangeAndUndoRestores(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+
+	updated := updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, keyRune('j'))
+	updated = updateModel(t, updated, keyRune('j'))
+	updated, cmd := updateModelWithCmd(t, updated, keyRune('d'))
+
+	assert.Equal(t, []string{"v1", "v2", "v3"}, service.toggleDeleteCalls)
+	assert.False(t, updated.visualActive)
+	assert.Contains(t, updated.statusMessage, "3 messages moved to trash")
+	require.NotNil(t, updated.pendingUndo)
+	assert.Len(t, updated.pendingUndo.snapshots(), 3)
+	require.NotNil(t, cmd)
+
+	restored := updateModel(t, updated, keyRune('u'))
+	assert.Equal(t, "Undo applied", restored.statusMessage)
+	assert.Nil(t, restored.pendingUndo)
+}
+
+func TestVisualModeArchiveAndSpamRange(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+	updated := updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, keyRune('j'))
+	updated, _ = updateModelWithCmd(t, updated, keyRune('a'))
+	assert.Equal(t, []string{"v1", "v2"}, service.archiveCalls)
+	assert.False(t, updated.visualActive)
+
+	service = &messageServiceStub{inbox: visualTestMessages()}
+	m = visualTestModel(service)
+	updated = updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, keyRune('j'))
+	updated, _ = updateModelWithCmd(t, updated, keyRune('!'))
+	assert.Equal(t, []string{"v1", "v2"}, service.spamCalls)
+	assert.False(t, updated.visualActive)
+}
+
+func TestVisualModeReverseSelection(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+	m.listCursor = 2
+
+	updated := updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, keyRune('k'))
+	updated = updateModel(t, updated, keyRune('k'))
+	_, _ = updateModelWithCmd(t, updated, keyRune('d'))
+
+	assert.Equal(t, []string{"v1", "v2", "v3"}, service.toggleDeleteCalls, "reverse selection must act from the top of the range")
+}
+
+func TestVisualModeMarkReadRange(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+	m.listCursor = 2
+
+	updated := updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, keyRune('j'))
+	updated, cmd := updateModelWithCmd(t, updated, keyRune('m'))
+
+	assert.ElementsMatch(t, []string{"v3", "v4"}, service.markReadCalls)
+	assert.False(t, updated.visualActive)
+	assert.Contains(t, updated.statusMessage, "2 messages marked as read")
+	require.NotNil(t, cmd)
+}
+
+func TestVisualModeGExtendsToBottom(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+
+	updated := updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, keyRune('G'))
+	_, _ = updateModelWithCmd(t, updated, keyRune('d'))
+
+	assert.Len(t, service.toggleDeleteCalls, 4, "V+G+d must trash the whole list")
+}
+
+func TestVisualModeBlocksEnterAndCompose(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+
+	updated := updateModel(t, m, keyRune('V'))
+	for _, blocked := range []tea.KeyMsg{{Type: tea.KeyEnter}, keyRune('c'), keyRune('r')} {
+		updated = updateModel(t, updated, blocked)
+		assert.Equal(t, stateList, updated.state)
+		assert.True(t, updated.visualActive)
+	}
+	assert.Nil(t, updated.activeDraft)
+}
+
+func TestVisualModeUnavailableOutsideList(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	for _, state := range []SessionState{stateSidebar, stateContent} {
+		m := visualTestModel(service)
+		m.state = state
+		updated := updateModel(t, m, keyRune('V'))
+		assert.False(t, updated.visualActive)
+	}
+}
+
+func TestVisualModeEmptyList(t *testing.T) {
+	service := &messageServiceStub{}
+	m := testModelWithService(service)
+	m.state = stateList
+
+	updated := updateModel(t, m, keyRune('V'))
+	assert.False(t, updated.visualActive)
+	assert.Equal(t, "No messages to select", updated.statusMessage)
+}
+
+func TestVisualAnchorClampsOnReload(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+	m.listCursor = 3
+	m = updateModel(t, m, keyRune('V'))
+	require.True(t, m.visualActive)
+
+	smaller := visualTestMessages()[:2]
+	m = updateModel(t, m, messagesLoadedMsg{messages: smaller})
+	assert.True(t, m.visualActive)
+	assert.LessOrEqual(t, m.visualAnchor, len(m.messages)-1)
+
+	m = updateModel(t, m, messagesLoadedMsg{messages: nil})
+	assert.False(t, m.visualActive, "empty reload must leave visual mode")
+}
+
+func TestApplyRepeatableActionAdvancesWhenMessageStays(t *testing.T) {
+	// In a view where the acted-on message stays visible, a count must touch
+	// successive rows instead of hammering the same one.
+	service := &messageServiceStub{inbox: []*models.Message{
+		{ID: "s1", AccountID: "personal", Subject: "One", Labels: []string{"inbox"}},
+		{ID: "s2", AccountID: "personal", Subject: "Two", Labels: []string{"inbox"}},
+		{ID: "s3", AccountID: "personal", Subject: "Three", Labels: []string{"inbox"}},
+	}}
+	m := visualTestModel(service)
+
+	cmd := m.applyRepeatableAction(repeatableActionSpam, 3)
+	_ = cmd
+
+	assert.Equal(t, []string{"s1", "s2", "s3"}, service.spamCalls)
+}
+
+func composeCommandModel(service *messageServiceStub) Model {
+	m := testModelWithService(service)
+	m.enterComposeState(&models.Message{AccountID: "personal", To: []string{"user@example.com"}, Subject: "Hello", Body: "Body"}, 1)
+	return m
+}
+
+func runComposeCommand(t *testing.T, m Model, command string) (Model, tea.Cmd) {
+	t.Helper()
+	m = updateModel(t, m, keyRune(':'))
+	for _, r := range command {
+		m = updateModel(t, m, keyRune(r))
+	}
+	return updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+}
+
+func TestComposeCommandWSavesAndStays(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages(), composedDraftID: "draft-1"}
+	m := composeCommandModel(service)
+	m.activeDraft.Body = "Edited body"
+
+	updated, _ := runComposeCommand(t, m, "w")
+
+	assert.Equal(t, stateCompose, updated.state, ":w must keep the composer open")
+	assert.Equal(t, "Draft saved", updated.statusMessage)
+	require.Len(t, service.composeCalls, 1)
+}
+
+func TestComposeCommandWQSavesAndCloses(t *testing.T) {
+	for _, command := range []string{"wq", "x"} {
+		service := &messageServiceStub{inbox: sampleMessages(), composedDraftID: "draft-1"}
+		m := composeCommandModel(service)
+		m.activeDraft.Body = "Edited body"
+
+		updated, cmd := runComposeCommand(t, m, command)
+
+		assert.Equal(t, stateList, updated.state, command)
+		assert.Equal(t, "Draft saved", updated.statusMessage)
+		require.Len(t, service.composeCalls, 1, command)
+		require.NotNil(t, cmd)
+	}
+}
+
+func TestComposeCommandQWithUnsavedBlocks(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := composeCommandModel(service)
+	m.activeDraft.Body = "Edited body"
+
+	updated, _ := runComposeCommand(t, m, "q")
+
+	assert.Equal(t, stateCompose, updated.state)
+	assert.True(t, updated.statusError)
+	assert.Contains(t, updated.statusMessage, "Unsaved draft")
+}
+
+func TestComposeCommandQAfterWCloses(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages(), composedDraftID: "draft-1"}
+	m := composeCommandModel(service)
+	m.activeDraft.Body = "Edited body"
+
+	updated, _ := runComposeCommand(t, m, "w")
+	require.Equal(t, stateCompose, updated.state)
+
+	updated, cmd := runComposeCommand(t, updated, "q")
+	assert.Equal(t, stateList, updated.state, ":q after :w must close the composer")
+	require.NotNil(t, cmd)
+}
+
+func TestComposeCommandQBangDiscards(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := composeCommandModel(service)
+	m.activeDraft.Body = "Edited body"
+
+	updated, cmd := runComposeCommand(t, m, "q!")
+
+	assert.Equal(t, stateList, updated.state)
+	assert.Equal(t, "Draft discarded", updated.statusMessage)
+	assert.Empty(t, service.composeCalls, ":q! must not save the draft")
+	require.NotNil(t, cmd)
+}
+
+func TestComposeCommandSendSendsDraft(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages(), composedDraftID: "draft-9"}
+	m := composeCommandModel(service)
+	m.activeDraft.Body = "Edited body"
+
+	updated, cmd := runComposeCommand(t, m, "send")
+
+	assert.Equal(t, stateList, updated.state)
+	assert.Equal(t, "Message sent", updated.statusMessage)
+	assert.Equal(t, []string{"draft-9"}, service.sendCalls)
+	require.NotNil(t, cmd)
+}
+
+func TestCommandCandidatesDependOnState(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	assert.Contains(t, m.commandPromptCandidates(), "inbox")
+	assert.NotContains(t, m.commandPromptCandidates(), "wq")
+
+	m = composeCommandModel(service)
+	assert.Contains(t, m.commandPromptCandidates(), "wq")
+	assert.NotContains(t, m.commandPromptCandidates(), "inbox")
+}
+
+func TestCommandWOutsideComposeFails(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+
+	updated, _ := runComposeCommand(t, m, "w")
+
+	assert.True(t, updated.statusError)
+	assert.Equal(t, "No draft to save", updated.statusMessage)
+}
+
+func TestCommandQOutsideComposeQuits(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+
+	m = updateModel(t, m, keyRune(':'))
+	m = updateModel(t, m, keyRune('q'))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	require.NotNil(t, cmd)
+	assert.Equal(t, tea.Quit(), cmd())
+}
+
+func TestCtrlHCyclesFocusThroughPanes(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.messages = service.inbox
+	m.state = stateSidebar
+
+	updated, cmd := updateModelWithCmd(t, m, tea.KeyMsg{Type: tea.KeyCtrlH})
+	assert.Equal(t, stateList, updated.state, "sidebar -> list")
+	require.NotNil(t, cmd, "entering the list must reload messages")
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyCtrlH})
+	assert.Equal(t, stateContent, updated.state, "list -> reader")
+
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyCtrlH})
+	assert.Equal(t, stateSidebar, updated.state, "reader -> sidebar (wrap)")
+}
+
+func TestCtrlHInVisualModeStaysInList(t *testing.T) {
+	service := &messageServiceStub{inbox: visualTestMessages()}
+	m := visualTestModel(service)
+
+	updated := updateModel(t, m, keyRune('V'))
+	updated = updateModel(t, updated, tea.KeyMsg{Type: tea.KeyCtrlH})
+
+	assert.Equal(t, stateList, updated.state, "visual selection must not lose the list pane")
+	assert.True(t, updated.visualActive)
 }

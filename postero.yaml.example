@@ -5,15 +5,16 @@ accounts:
     username: "user@example.com"
     oauth2:
       client_id: "your-client-id"
-      client_secret: "your-client-secret"
+      # The client secret is NOT stored here. Save it with
+      # `pstr auth set-secret personal`, or set:
+      # client_secret_cmd: ["pass", "show", "oauth/personal-secret"]
+    # Secrets are NEVER stored in this file. Use the OS keychain
+    # (`pstr auth set personal`) or a password_cmd.
     imap:
-      # password: "imap-app-password"
       # password_cmd: ["pass", "show", "email/personal-imap"]
     smtp:
-      # password: "smtp-app-password"
       # password_cmd: ["pass", "show", "email/personal-smtp"]
-    # Shared fallback when both protocols use the same secret.
-    # password: "shared-app-password"
+    # Shared password_cmd when both protocols use the same secret.
     # password_cmd: ["pass", "show", "email/personal"]
 
 data_path: "~/.local/share/postero"
@@ -39,6 +40,21 @@ ai:
       type: "gemini"
       model: "gemini-2.5-flash"
       # POSTERO_AI_PROVIDERS_GEMINI_API_KEY=...
+    anthropic:
+      type: "anthropic"          # Claude via the Anthropic Messages API
+      model: "claude-opus-5"     # or claude-sonnet-5, claude-haiku-4-5, ...
+      # base_url defaults to https://api.anthropic.com/v1
+      # Store the key in the OS keychain (never inline):
+      #   pstr auth set-ai anthropic
+      # or provide an api_key_cmd that prints it.
+    openclaw:
+      type: "openclaw"           # local OpenClaw agent (headless `agent exec`)
+      # command defaults to: [openclaw, agent, exec, --message-file, -]
+    # A generic local agent (Claude Code, opencode, any CLI). The prompt is sent
+    # on stdin; the reply is read from stdout. Runs as argv, never via a shell.
+    agent:
+      type: "command"
+      command: ["claude", "-p"]  # e.g. Claude Code; or your own agent CLI
   templates:
     compose-default:
       mode: "compose"

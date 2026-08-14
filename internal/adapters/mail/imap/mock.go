@@ -63,8 +63,8 @@ func generateTestMessages() []*models.Message {
 			Subject:   "Welcome to Postero",
 			From:      "team@postero.dev",
 			To:        []string{"user@example.com"},
-			Body:      "Thank you for trying Postero! This is a test email to verify your setup.",
-			HTML:      "<p>Thank you for trying Postero! This is a test email to verify your setup.</p>",
+			Body:      "Welcome to **Postero** — a **terminal-first** email client in a single binary.\n\nRead, triage, search, and reply with **vim-style** keys — press r to reply, c to compose, / to search. No mouse, no browser.",
+			HTML:      "<p>Welcome to <b>Postero</b> — a <b>terminal-first</b> email client in a single binary.</p><p>Read, triage, search, and reply with <b>vim-style</b> keys. No mouse, no browser.</p>",
 			Date:      now.Add(-2 * time.Hour),
 			Flags: models.MessageFlags{
 				Seen:     true,

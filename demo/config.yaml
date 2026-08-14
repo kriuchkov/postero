@@ -1,0 +1,16 @@
+# Demo AI config: a local command agent (stands in for OpenClaw / Claude Code).
+# The reply popup (press A) drives this — no API key, content stays local.
+ai:
+  default_reply_template: "reply-default"
+  providers:
+    agent:
+      type: "command"
+      command: ["./demo/reply_agent.sh"]
+  templates:
+    reply-default:
+      mode: "reply"
+      provider: "agent"
+      prompt: |
+        Draft a reply. Instruction: {{ .Instruction }}
+        Original from: {{ .Original.From }}
+        {{ .Original.Body }}

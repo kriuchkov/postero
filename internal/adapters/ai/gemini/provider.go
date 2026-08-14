@@ -10,7 +10,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/kriuchkov/postero/internal/config"
+	"github.com/kriuchkov/postero/internal/adapters/ai/aiutil"
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
@@ -20,13 +20,13 @@ type Provider struct {
 	client  *http.Client
 }
 
-func NewProvider(cfg config.AIProviderConfig, client *http.Client) *Provider {
+func NewProvider(opts aiutil.Options, client *http.Client) *Provider {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &Provider{
-		baseURL: strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
-		apiKey:  strings.TrimSpace(cfg.APIKey),
+		baseURL: strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"),
+		apiKey:  strings.TrimSpace(opts.APIKey),
 		client:  client,
 	}
 }
@@ -34,6 +34,9 @@ func NewProvider(cfg config.AIProviderConfig, client *http.Client) *Provider {
 func (p *Provider) CompletePrompt(ctx context.Context, request models.PromptCompletionRequest) (string, error) {
 	if p.apiKey == "" {
 		return "", errors.New("gemini api key is not configured")
+	}
+	if err := aiutil.EnsureHTTPS(p.baseURL); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(request.Model) == "" {
 		return "", errors.New("gemini model is not configured")
@@ -57,16 +60,15 @@ func (p *Provider) CompletePrompt(ctx context.Context, request models.PromptComp
 		return "", errors.Wrap(err, "marshal gemini request")
 	}
 
-	endpoint := p.baseURL + "/models/" + url.PathEscape(
-		strings.TrimSpace(request.Model),
-	) + ":generateContent?key=" + url.QueryEscape(
-		p.apiKey,
-	)
+	// The API key goes in a header, not the URL query string: a query-string key
+	// leaks into proxy/access logs and into url.Error messages on network failure.
+	endpoint := p.baseURL + "/models/" + url.PathEscape(strings.TrimSpace(request.Model)) + ":generateContent"
 	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return "", errors.Wrap(err, "create gemini request")
 	}
 	httpRequest.Header.Set("Content-Type", "application/json")
+	httpRequest.Header.Set("X-Goog-Api-Key", p.apiKey)
 
 	response, err := p.client.Do(httpRequest)
 	if err != nil {

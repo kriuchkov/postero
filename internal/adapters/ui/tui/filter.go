@@ -7,45 +7,55 @@ import (
 	"strings"
 
 	"github.com/kriuchkov/postero/internal/core/models"
+	"github.com/kriuchkov/postero/pkg/htmlmd"
 )
 
 func (m Model) getFilteredBody(msg *models.Message) string {
-	if m.config == nil {
-		return defaultFallback(msg)
-	}
-
-	// First, check if HTML exists and we have a text/html filter
-	if msg.HTML != "" {
-		if cmdStr, ok := m.config.Filters["text/html"]; ok && cmdStr != "" {
-			out, err := applyFilterCmd(cmdStr, msg.HTML)
-			if err == nil { // On success, return filtered output
-				return out
-			}
-			// If external command failed, we could log it, but for now we fallback
+	htmlBody, plainBody := msg.HTML, msg.Body
+	// Some servers deliver HTML in the plain Body field, or the "plain" alternative
+	// is itself HTML. Whenever the plain part looks like HTML, route it through the
+	// converter so the reader never shows raw tags.
+	if htmlmd.LooksLikeHTML(plainBody) {
+		if strings.TrimSpace(htmlBody) == "" {
+			htmlBody = plainBody
 		}
+		plainBody = ""
 	}
 
-	// Next, check plain text filter
-	if msg.Body != "" {
-		if cmdStr, ok := m.config.Filters["text/plain"]; ok && cmdStr != "" {
-			out, err := applyFilterCmd(cmdStr, msg.Body)
-			if err == nil {
-				return out
-			}
-		}
+	// Honour an explicit external filter first (e.g. w3m), if configured.
+	if out, ok := m.applyExternalFilter("text/html", htmlBody); ok {
+		return out
+	}
+	if out, ok := m.applyExternalFilter("text/plain", plainBody); ok {
+		return out
 	}
 
-	return defaultFallback(msg)
-}
-
-func defaultFallback(msg *models.Message) string {
-	if msg.Body != "" {
-		return msg.Body
+	// Prefer a plain-text part; otherwise convert HTML into readable Markdown so
+	// the reader never shows raw tags.
+	if strings.TrimSpace(plainBody) != "" {
+		return plainBody
 	}
-	if msg.HTML != "" {
-		return msg.HTML
+	if strings.TrimSpace(htmlBody) != "" {
+		return htmlmd.ToMarkdown(htmlBody)
 	}
 	return "No content."
+}
+
+// applyExternalFilter runs a configured filter command for the given MIME type
+// over content, returning (output, true) on success.
+func (m Model) applyExternalFilter(mimeType, content string) (string, bool) {
+	if m.config == nil || strings.TrimSpace(content) == "" {
+		return "", false
+	}
+	cmdStr, ok := m.config.Filters[mimeType]
+	if !ok || cmdStr == "" {
+		return "", false
+	}
+	out, err := applyFilterCmd(cmdStr, content)
+	if err != nil {
+		return "", false
+	}
+	return out, true
 }
 
 func applyFilterCmd(command string, input string) (string, error) {

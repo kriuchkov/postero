@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
-	appcore "github.com/kriuchkov/postero/internal/app"
 	"github.com/kriuchkov/postero/internal/config"
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
@@ -24,6 +23,7 @@ const (
 	stateList
 	stateContent
 	stateCompose
+	stateSetup
 )
 
 //nolint:recvcheck // Bubble Tea models intentionally mix value and pointer receivers.
@@ -38,7 +38,10 @@ type Model struct {
 	sidebarItems     []string
 	sidebarCursor    int
 	service          ports.MessageService
+	store            ports.MessageRepository
 	assistant        ports.DraftAssistant
+	syncer           ports.MailboxSyncer
+	seeder           ports.MailboxSeeder
 	allMessages      []*models.Message
 	sidebarTagSource []*models.Message
 	messages         []*models.Message
@@ -65,67 +68,72 @@ type Model struct {
 	composeHint      string
 	composeEditing   bool
 	composeBaseline  *models.Message
-	searchInput      textinput.Model
-	commandActive    bool
-	commandDraft     string
-	commandHistory   []string
-	commandHistoryIx int
-	searchActive     bool
-	searchQuery      string
-	searchDebouncing bool
-	searchToken      int
-	pendingUndo      *undoState
-	undoToken        int
-	contentViewport  viewport.Model
-	contentMessageID string
-	pendingMotion    string
-	pendingCount     string
-	lastAction       repeatableAction
+	// composeDiscardArmed is set after the first esc on an unsaved draft; the
+	// next esc discards it.
+	composeDiscardArmed bool
+	searchInput         textinput.Model
+	// AI reply popup: a modal prompt to hand the agent an instruction.
+	aiPromptActive     bool
+	aiPromptReplyAll   bool
+	aiPromptInput      textinput.Model
+	commandActive      bool
+	commandDraft       string
+	commandHistory     []string
+	commandHistoryIx   int
+	searchActive       bool
+	searchQuery        string
+	searchDebouncing   bool
+	searchToken        int
+	pendingUndo        *undoState
+	undoToken          int
+	contentViewport    viewport.Model
+	contentMessageID   string
+	renderedBody       string // cached getFilteredBody result for renderedBodyID
+	renderedBodyID     string // message ID the cached body belongs to
+	wrappedBody        string // renderedBody soft-wrapped to wrappedBodyWidth
+	wrappedBodyWidth   int    // viewport width the wrapped body was built for
+	wrappedBodyExpand  bool   // whether the cached wrap used expanded (full) URLs
+	expandURLs         bool   // reader shows full URLs instead of collapsed labels
+	pendingMotion      string
+	pendingCount       string
+	lastAction         repeatableAction
+	announceSearchKind searchByKind
+	announceSearchTerm string
+	visualActive       bool
+	visualAnchor       int
 
 	// Compose inputs
 	toInput      textinput.Model
 	subjectInput textinput.Model
 	bodyInput    textarea.Model
 	focusIndex   int // 0: Account, 1: To, 2: Subject, 3: Body
+
+	// First-run account setup wizard
+	setupEmailInput    textinput.Model
+	setupPasswordInput textinput.Model
+	setupIMAPInput     textinput.Model
+	setupSMTPInput     textinput.Model
+	setupFocus         int
+	setupProvider      string
+	setupErr           string
 }
 
-// initialModel wires the starting UI state together with config-derived services, theme, and compose inputs.
-func initialModel() Model {
-	items := []string{"Inbox", "Sent", "Drafts", "Archive", "Trash", "Spam"}
+// Dependencies carries everything the TUI needs, assembled by the composition
+// root. The UI adapter depends only on these ports (and config), never on the
+// wiring package, so the dependency arrow points inward.
+type Dependencies struct {
+	Config    *config.Config
+	Service   ports.MessageService
+	Store     ports.MessageRepository
+	Assistant ports.DraftAssistant
+	Syncer    ports.MailboxSyncer
+	Seeder    ports.MailboxSeeder
+}
 
-	cfg, err := appcore.LoadConfig()
-	var msgService ports.MessageService
-	var draftAssistant ports.DraftAssistant
-	defaultAcctID := ""
-	defaultFrom := ""
-	accountNames := []string{}
-	accountEmails := map[string]string{}
-
-	if err == nil && cfg != nil {
-		defaultAcctID, defaultFrom = appcore.DefaultSender(cfg)
-		for _, acc := range cfg.Accounts {
-			accountNames = append(accountNames, acc.Name)
-			accountEmails[acc.Name] = acc.Email
-		}
-		if len(cfg.Accounts) > 0 {
-			items = append(items, "")
-			items = append(items, "Accounts:")
-			for _, acc := range cfg.Accounts {
-				items = append(items, fmt.Sprintf("  %s", acc.Name))
-			}
-		}
-
-		if service, _, serviceErr := appcore.NewMessageService(); serviceErr == nil {
-			msgService = service
-		}
-		if assistant, assistantErr := appcore.NewDraftAssistantWithConfig(cfg); assistantErr == nil {
-			draftAssistant = assistant
-		}
-	}
-
-	if msgService == nil {
-		msgService, _, _ = appcore.NewMessageService()
-	}
+// newModel wires the starting UI state from injected dependencies plus the
+// config-derived theme, keybindings, and compose inputs.
+func newModel(deps Dependencies) Model {
+	cfg := deps.Config
 
 	bindings := defaultKeyMap()
 	styles := DefaultStyles()
@@ -134,16 +142,19 @@ func initialModel() Model {
 		styles = StylesFromTheme(cfg.Theme)
 	}
 
-	return Model{
+	m := Model{
 		config:           cfg,
 		state:            stateSidebar,
 		keys:             bindings,
 		help:             help.New(),
 		styles:           styles,
-		sidebarItems:     items,
+		sidebarItems:     nil,
 		sidebarCursor:    0,
-		service:          msgService,
-		assistant:        draftAssistant,
+		service:          deps.Service,
+		store:            deps.Store,
+		assistant:        deps.Assistant,
+		syncer:           deps.Syncer,
+		seeder:           deps.Seeder,
 		allMessages:      []*models.Message{},
 		sidebarTagSource: []*models.Message{},
 		messages:         []*models.Message{},
@@ -158,10 +169,10 @@ func initialModel() Model {
 		aiLoadingToken:   0,
 		aiLoadingLabel:   "",
 		activeDraft:      nil,
-		accountNames:     accountNames,
-		accountEmails:    accountEmails,
-		defaultFrom:      defaultFrom,
-		defaultAcctID:    defaultAcctID,
+		accountNames:     nil,
+		accountEmails:    map[string]string{},
+		defaultFrom:      "",
+		defaultAcctID:    "",
 		activeAccountID:  "",
 		activeTagID:      "",
 		statusMessage:    "",
@@ -177,6 +188,12 @@ func initialModel() Model {
 			input := textinput.New()
 			input.Prompt = "/ "
 			input.Placeholder = "subject, sender, body"
+			return input
+		}(),
+		aiPromptInput: func() textinput.Model {
+			input := textinput.New()
+			input.Prompt = "» "
+			input.Placeholder = "e.g. politely accept and ask for the agenda"
 			return input
 		}(),
 		searchActive:     false,
@@ -197,9 +214,67 @@ func initialModel() Model {
 		}(),
 		focusIndex: 0,
 	}
+	m.applyAccountsFromConfig(cfg)
+	if cfg == nil || len(cfg.Accounts) == 0 {
+		// First run: walk the user through adding an account.
+		m.enterSetupState()
+	}
+	return m
+}
+
+// applyAccountsFromConfig refreshes account-derived UI state (sidebar rows,
+// account names, default sender) after the config changes.
+func (m *Model) applyAccountsFromConfig(cfg *config.Config) {
+	items := []string{"Inbox", "Sent", "Drafts", "Archive", "Trash", "Spam"}
+	names := []string{}
+	emails := map[string]string{}
+	if cfg != nil {
+		if len(cfg.Accounts) > 0 {
+			m.defaultAcctID = cfg.Accounts[0].Name
+			m.defaultFrom = cfg.Accounts[0].Email
+		}
+		for _, acc := range cfg.Accounts {
+			names = append(names, acc.Name)
+			emails[acc.Name] = acc.Email
+		}
+		if len(cfg.Accounts) > 0 {
+			items = append(items, "", "Accounts:")
+			for _, acc := range cfg.Accounts {
+				items = append(items, fmt.Sprintf("  %s", acc.Name))
+			}
+		}
+	}
+	m.sidebarItems = items
+	m.accountNames = names
+	m.accountEmails = emails
+	if m.sidebarCursor >= len(m.sidebarItems) {
+		m.sidebarCursor = 0
+	}
+}
+
+// applyDemoAccount sets an in-memory demo account for browsing sample mail.
+// Nothing is written to the config file, so a later refresh reloads locally
+// instead of attempting a real IMAP sync.
+func (m *Model) applyDemoAccount() {
+	name, email := models.DemoAccountName, models.DemoAccountEmail
+	m.sidebarItems = []string{"Inbox", "Sent", "Drafts", "Archive", "Trash", "Spam", "", "Accounts:", "  " + name}
+	m.accountNames = []string{name}
+	m.accountEmails = map[string]string{name: email}
+	m.defaultAcctID = name
+	m.defaultFrom = email
+	if m.sidebarCursor >= len(m.sidebarItems) {
+		m.sidebarCursor = 0
+	}
 }
 
 func (m Model) Init() tea.Cmd {
+	// With real accounts, pull fresh mail from the server on launch (this also
+	// purges any leftover demo data), so the inbox is populated without a manual
+	// refresh — e.g. right after clearing the local store. Otherwise (demo mode /
+	// no accounts) just read whatever is local.
+	if m.canSyncAccounts() {
+		return tea.Batch(m.loadingTickCmd(), m.syncAccountsCmd())
+	}
 	return m.fetchMessages()
 }
 

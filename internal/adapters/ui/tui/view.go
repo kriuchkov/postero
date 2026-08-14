@@ -13,6 +13,9 @@ const (
 )
 
 func (m Model) View() string {
+	if m.state == stateSetup {
+		return renderSetupView(m)
+	}
 	// Layout is composed top-down: header, three-pane body, then footer.
 	if m.width == 0 || m.height == 0 {
 		return "Initialising..."
@@ -34,7 +37,7 @@ func (m Model) View() string {
 	}
 	paneHeight := max(mainHeight-paneFrameHeight, 0)
 
-	sidebarWidth, listWidth, contentWidth := paneWidths(m.width)
+	sidebarWidth, listWidth, contentWidth := paneWidths(m, m.width)
 
 	sidebar := renderSidebar(m, sidebarWidth, paneHeight)
 	list := renderList(m, listWidth, paneHeight)
@@ -54,11 +57,28 @@ func (m Model) View() string {
 		footer,
 	)
 
-	return root
+	// Safety net: never emit more than the terminal can show. The layout math
+	// above targets exactly m.width×m.height, but a pathologically small terminal
+	// (or an unexpectedly tall pane) must degrade by clipping, not by wrapping into
+	// a garbled screen.
+	screen := lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(root)
+	if m.aiPromptActive {
+		screen = overlayCenter(screen, m.renderAIReplyPopup(), m.width, m.height)
+	}
+	return screen
 }
 
-func paneWidths(totalWidth int) (int, int, int) {
-	availableWidth := max(totalWidth-4, minSidebarWidth+minListWidth+minContentWidth)
+// paneFrameWidth is the total horizontal space the three pane styles spend on
+// borders and padding — it must be reserved before dividing the remaining width,
+// or the rendered panes (content + frame) overflow the terminal.
+func paneFrameWidth(m Model) int {
+	return m.styles.Sidebar.GetHorizontalFrameSize() +
+		m.styles.List.GetHorizontalFrameSize() +
+		m.styles.Content.GetHorizontalFrameSize()
+}
+
+func paneWidths(m Model, totalWidth int) (int, int, int) {
+	availableWidth := max(totalWidth-paneFrameWidth(m), minSidebarWidth+minListWidth+minContentWidth)
 
 	sidebarWidth := clampInt(int(float64(totalWidth)*0.18), minSidebarWidth, maxSidebarWidth)
 	remainingWidth := availableWidth - sidebarWidth

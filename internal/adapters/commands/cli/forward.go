@@ -41,8 +41,8 @@ var forwardCmd = &cobra.Command{
 				return coreerrors.AccountNotFound(forwardAccount)
 			}
 			draft, err = service.UpdateDraft(context.Background(), draft.ID, &models.UpdateMessageRequest{
-				AccountID: stringPtr(account.Name),
-				From:      stringPtr(account.Email),
+				AccountID: new(account.Name),
+				From:      new(account.Email),
 			})
 			if err != nil {
 				return errors.Wrap(err, "rebind forward draft")

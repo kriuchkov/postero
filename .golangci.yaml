@@ -217,6 +217,13 @@ linters:
       enable:
         - no-unused-link
 
+    gosec:
+      excludes:
+        # G117 flags any struct field named like a secret when it is marshaled.
+        # Postero deliberately serializes OAuth tokens to the OS keychain (never to
+        # logs), so this fires on legitimate, audited code.
+        - G117
+
     govet:
       enable-all: true
       disable:
@@ -346,7 +353,17 @@ linters:
           - forbidigo
           - gochecknoglobals
           - gochecknoinits
+          - goconst
           - godot
+      # Domain vocabulary (mailbox names, provider names, storage backends) is
+      # inherently repeated; extracting it into constants adds noise, not clarity —
+      # consistent with the tui/tests goconst exclusions above.
+      - path: 'internal/config/'
+        linters: [ goconst ]
+      - path: 'internal/services/'
+        linters: [ goconst ]
+      - path: 'internal/adapters/mail/'
+        linters: [ goconst ]
       - path: 'internal/adapters/ui/tui'
         linters:
           - gochecknoglobals
@@ -361,6 +378,7 @@ linters:
         linters:
           - godot
           - funlen
+          - goconst
       - path: 'internal/adapters/mail/imap/'
         linters:
           - godot

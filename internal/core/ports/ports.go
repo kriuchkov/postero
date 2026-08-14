@@ -16,6 +16,24 @@ type PromptCompletionProvider interface {
 	CompletePrompt(ctx context.Context, request models.PromptCompletionRequest) (string, error)
 }
 
+// AccountSyncer pulls remote mailboxes into the local message store.
+type AccountSyncer interface {
+	SyncAccounts(ctx context.Context, targets []models.SyncTarget) ([]*models.Message, error)
+}
+
+// MailboxSyncer synchronises every configured account into the local store and
+// returns the resulting messages. It is the high-level capability the UI drives;
+// the composition root binds it to the concrete accounts/config.
+type MailboxSyncer interface {
+	SyncAll(ctx context.Context) ([]*models.Message, error)
+}
+
+// MailboxSeeder loads sample messages into the local store so the app can be
+// explored without a real account.
+type MailboxSeeder interface {
+	SeedDemo(ctx context.Context) ([]*models.Message, error)
+}
+
 // MessageRepository defines the interface for message persistence
 type MessageRepository interface {
 	// GetByID retrieves a message by its ID

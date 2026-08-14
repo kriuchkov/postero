@@ -36,7 +36,7 @@ func GetOAuthConfig(acc *OAuth2Config) *oauth2.Config {
 
 	return &oauth2.Config{
 		ClientID:     acc.ClientID,
-		ClientSecret: acc.ClientSecret,
+		ClientSecret: acc.ClientSecret(),
 		Endpoint:     endpoint,
 		Scopes:       acc.Scopes,
 		RedirectURL:  redirectURL,

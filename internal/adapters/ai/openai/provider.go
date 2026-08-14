@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/kriuchkov/postero/internal/config"
+	"github.com/kriuchkov/postero/internal/adapters/ai/aiutil"
 	"github.com/kriuchkov/postero/internal/core/models"
 )
 
@@ -19,13 +19,13 @@ type Provider struct {
 	client  *http.Client
 }
 
-func NewProvider(cfg config.AIProviderConfig, client *http.Client) *Provider {
+func NewProvider(opts aiutil.Options, client *http.Client) *Provider {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &Provider{
-		baseURL: strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
-		apiKey:  strings.TrimSpace(cfg.APIKey),
+		baseURL: strings.TrimRight(strings.TrimSpace(opts.BaseURL), "/"),
+		apiKey:  strings.TrimSpace(opts.APIKey),
 		client:  client,
 	}
 }
@@ -33,6 +33,9 @@ func NewProvider(cfg config.AIProviderConfig, client *http.Client) *Provider {
 func (p *Provider) CompletePrompt(ctx context.Context, request models.PromptCompletionRequest) (string, error) {
 	if p.apiKey == "" {
 		return "", errors.New("openai api key is not configured")
+	}
+	if err := aiutil.EnsureHTTPS(p.baseURL); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(request.Model) == "" {
 		return "", errors.New("openai model is not configured")

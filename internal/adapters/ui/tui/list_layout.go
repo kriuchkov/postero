@@ -14,6 +14,7 @@ const (
 	listCursorNone listCursorMode = iota
 	listCursorPassive
 	listCursorActive
+	listCursorVisual
 )
 
 // renderList builds the list pane from a fixed header and a height-aware window of measured message cards.
@@ -46,7 +47,10 @@ func renderList(m Model, width, height int) string {
 			)
 			return style.Render(lipgloss.JoinVertical(lipgloss.Left, listHeader, body))
 		}
-		emptySubtitle := "Try another mailbox or sync an account."
+		emptySubtitle := "Press ctrl+r to sync, or try another mailbox."
+		if len(m.accountNames) == 0 {
+			emptySubtitle = "No account yet — run :setup to add one."
+		}
 		emptyTitle := "No messages"
 		emptyTitleStyle := paneTitleStyle(m, stateList)
 		if strings.TrimSpace(m.searchQuery) != "" {
@@ -96,7 +100,10 @@ func renderList(m Model, width, height int) string {
 	}
 
 	itemsBody := lipgloss.JoinVertical(lipgloss.Left, renderedItems...)
-	itemsBody = lipgloss.NewStyle().Width(contentWidth).Height(availableItemsHeight).Render(itemsBody)
+	// MaxWidth (not Width) here: the highlighted card rows carry a full-width
+	// background, and Width would re-wrap them, inserting a blank line after every
+	// row. The cards are already contentWidth wide, so MaxWidth only bounds them.
+	itemsBody = lipgloss.NewStyle().MaxWidth(contentWidth).Height(availableItemsHeight).Render(itemsBody)
 
 	if scrollIndicatorWidth > 0 {
 		indicator := renderListScrollIndicator(availableItemsHeight, len(m.messages), len(renderedItems), start, trackStyle, thumbStyle)
@@ -167,6 +174,14 @@ func renderListHeader(m Model) string {
 }
 
 func currentListCursorMode(m Model, index int) listCursorMode {
+	if m.visualActive && m.state == stateList {
+		if lo, hi := visualRange(m); index >= lo && index <= hi {
+			if index == m.listCursor {
+				return listCursorActive
+			}
+			return listCursorVisual
+		}
+	}
 	if index != m.listCursor {
 		return listCursorNone
 	}
@@ -232,7 +247,8 @@ func listCardHeight(msg *models.Message) int {
 		return 0
 	}
 
-	height := 4
+	// sender + subject + preview rows; no inter-card margin.
+	height := 3
 	if renderMessageChips(msg, false) != "" {
 		height++
 	}

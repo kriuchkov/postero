@@ -30,3 +30,29 @@ type PromptCompletionRequest struct {
 	Prompt       string  `json:"prompt,omitempty"`
 	Temperature  float64 `json:"temperature,omitempty"`
 }
+
+// AISettings is the provider-neutral configuration the draft assistant needs. It
+// is a domain type so the assistant service depends only on core, never on the
+// infrastructure config package; the composition root maps config into it.
+type AISettings struct {
+	DefaultComposeTemplate string
+	DefaultReplyTemplate   string
+	Providers              map[string]AIProviderSettings
+	Templates              map[string]AITemplate
+}
+
+// AIProviderSettings holds the per-provider values the assistant uses when
+// building a prompt. Secrets and transport (api keys, base URLs) belong to the
+// provider adapters, not here.
+type AIProviderSettings struct {
+	Model string
+}
+
+// AITemplate describes one prompt template the assistant can render.
+type AITemplate struct {
+	Mode         string
+	Provider     string
+	SystemPrompt string
+	Prompt       string
+	Temperature  float64
+}

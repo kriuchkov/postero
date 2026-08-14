@@ -9,7 +9,6 @@ import (
 
 	"github.com/go-faster/errors"
 
-	"github.com/kriuchkov/postero/internal/config"
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
 	"github.com/kriuchkov/postero/pkg/compose"
@@ -21,7 +20,7 @@ const (
 )
 
 type Service struct {
-	aiConfig  config.AIConfig
+	settings  models.AISettings
 	providers map[string]ports.PromptCompletionProvider
 }
 
@@ -40,8 +39,8 @@ type templateData struct {
 	Vars        map[string]string
 }
 
-func NewService(aiConfig config.AIConfig, providers map[string]ports.PromptCompletionProvider) *Service {
-	return &Service{aiConfig: aiConfig, providers: providers}
+func NewService(settings models.AISettings, providers map[string]ports.PromptCompletionProvider) *Service {
+	return &Service{settings: settings, providers: providers}
 }
 
 func (s *Service) GenerateDraft(ctx context.Context, request models.GenerateDraftRequest) (*models.GeneratedDraft, error) {
@@ -50,7 +49,7 @@ func (s *Service) GenerateDraft(ctx context.Context, request models.GenerateDraf
 		return nil, err
 	}
 
-	providerConfig, ok := s.aiConfig.Providers[templateConfig.Provider]
+	providerConfig, ok := s.settings.Providers[templateConfig.Provider]
 	if !ok {
 		return nil, errors.Errorf("ai provider %q referenced by template %q is not configured", templateConfig.Provider, templateName)
 	}
@@ -102,20 +101,20 @@ func (s *Service) GenerateDraft(ctx context.Context, request models.GenerateDraf
 	return draft, nil
 }
 
-func (s *Service) resolveTemplate(request models.GenerateDraftRequest) (string, config.AITemplateConfig, error) {
+func (s *Service) resolveTemplate(request models.GenerateDraftRequest) (string, models.AITemplate, error) {
 	mode := strings.ToLower(strings.TrimSpace(request.Mode))
 	name := strings.TrimSpace(request.Template)
 	if name == "" {
 		switch mode {
 		case ModeCompose:
-			name = strings.TrimSpace(s.aiConfig.DefaultComposeTemplate)
+			name = strings.TrimSpace(s.settings.DefaultComposeTemplate)
 		case ModeReply:
-			name = strings.TrimSpace(s.aiConfig.DefaultReplyTemplate)
+			name = strings.TrimSpace(s.settings.DefaultReplyTemplate)
 		}
 	}
 	if name == "" {
-		matches := make([]string, 0, len(s.aiConfig.Templates))
-		for candidate, cfg := range s.aiConfig.Templates {
+		matches := make([]string, 0, len(s.settings.Templates))
+		for candidate, cfg := range s.settings.Templates {
 			candidateMode := strings.ToLower(strings.TrimSpace(cfg.Mode))
 			if candidateMode == "" || candidateMode == mode {
 				matches = append(matches, candidate)
@@ -126,22 +125,22 @@ func (s *Service) resolveTemplate(request models.GenerateDraftRequest) (string, 
 		}
 	}
 	if name == "" {
-		return "", config.AITemplateConfig{}, errors.Errorf("no ai template configured for %s mode", mode)
+		return "", models.AITemplate{}, errors.Errorf("no ai template configured for %s mode", mode)
 	}
 
-	templateConfig, ok := s.aiConfig.Templates[name]
+	templateConfig, ok := s.settings.Templates[name]
 	if !ok {
-		return "", config.AITemplateConfig{}, errors.Errorf("ai template %q is not configured", name)
+		return "", models.AITemplate{}, errors.Errorf("ai template %q is not configured", name)
 	}
 	if templateConfig.Provider == "" {
-		return "", config.AITemplateConfig{}, errors.Errorf("ai template %q does not declare a provider", name)
+		return "", models.AITemplate{}, errors.Errorf("ai template %q does not declare a provider", name)
 	}
 	templateMode := strings.ToLower(strings.TrimSpace(templateConfig.Mode))
 	if templateMode != "" && templateMode != mode {
-		return "", config.AITemplateConfig{}, errors.Errorf("ai template %q only supports %s mode", name, templateMode)
+		return "", models.AITemplate{}, errors.Errorf("ai template %q only supports %s mode", name, templateMode)
 	}
 	if strings.TrimSpace(templateConfig.Prompt) == "" {
-		return "", config.AITemplateConfig{}, errors.Errorf("ai template %q does not define a prompt", name)
+		return "", models.AITemplate{}, errors.Errorf("ai template %q does not define a prompt", name)
 	}
 
 	return name, templateConfig, nil

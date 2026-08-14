@@ -2,6 +2,14 @@ package models
 
 import "time"
 
+// DemoAccountName labels demo messages so they are recognisable and never collide
+// with a real account. DemoAccountEmail is the placeholder sender for demo mode.
+// They live in the domain so both the seeder and the UI share one identity.
+const (
+	DemoAccountName  = "demo"
+	DemoAccountEmail = "you@postero.demo"
+)
+
 // Message represents an email message in the system
 type Message struct {
 	ID          string        `json:"id,omitempty"`
@@ -13,8 +21,8 @@ type Message struct {
 	Bcc         []string      `json:"bcc,omitempty"`
 	Body        string        `json:"body,omitempty"`
 	HTML        string        `json:"html,omitempty"`
-	Date        time.Time     `json:"date,omitempty"`
-	Flags       MessageFlags  `json:"flags,omitempty"`
+	Date        time.Time     `json:"date,omitzero"`
+	Flags       MessageFlags  `json:"flags,omitzero"`
 	Labels      []string      `json:"labels,omitempty"`
 	ThreadID    string        `json:"thread_id,omitempty"`
 	IsRead      bool          `json:"is_read,omitempty"`

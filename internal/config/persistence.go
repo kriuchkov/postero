@@ -85,7 +85,6 @@ func mergeAccount(existing, update AccountConfig) AccountConfig {
 	merged.Provider = mergeString(merged.Provider, update.Provider)
 	merged.Email = mergeString(merged.Email, update.Email)
 	merged.Username = mergeString(merged.Username, update.Username)
-	merged.Password = mergeString(merged.Password, update.Password)
 	if len(update.PasswordCmd) > 0 {
 		merged.PasswordCmd = append([]string{}, update.PasswordCmd...)
 	}
@@ -100,9 +99,6 @@ func mergeIMAP(existing, update IMAPConfig) IMAPConfig {
 	merged := existing
 	if strings.TrimSpace(update.Username) != "" {
 		merged.Username = update.Username
-	}
-	if strings.TrimSpace(update.Password) != "" {
-		merged.Password = update.Password
 	}
 	if len(update.PasswordCmd) > 0 {
 		merged.PasswordCmd = append([]string{}, update.PasswordCmd...)
@@ -126,9 +122,6 @@ func mergeSMTP(existing, update SMTPConfig) SMTPConfig {
 	merged := existing
 	if strings.TrimSpace(update.Username) != "" {
 		merged.Username = update.Username
-	}
-	if strings.TrimSpace(update.Password) != "" {
-		merged.Password = update.Password
 	}
 	if len(update.PasswordCmd) > 0 {
 		merged.PasswordCmd = append([]string{}, update.PasswordCmd...)
@@ -156,8 +149,8 @@ func mergeOAuth2(existing, update OAuth2Config) OAuth2Config {
 	if strings.TrimSpace(update.ClientID) != "" {
 		merged.ClientID = update.ClientID
 	}
-	if strings.TrimSpace(update.ClientSecret) != "" {
-		merged.ClientSecret = update.ClientSecret
+	if len(update.ClientSecretCmd) > 0 {
+		merged.ClientSecretCmd = append([]string{}, update.ClientSecretCmd...)
 	}
 	if strings.TrimSpace(update.TenantID) != "" {
 		merged.TenantID = update.TenantID

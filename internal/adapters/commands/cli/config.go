@@ -33,7 +33,7 @@ var configInitCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		provider := strings.TrimSpace(strings.ToLower(args[0]))
-		configDoc, err := buildInitConfig(provider, configInitEmail, configInitName, configInitOAuth2)
+		configDoc, guidance, err := buildInitConfig(provider, configInitEmail, configInitName, configInitOAuth2)
 		if err != nil {
 			return err
 		}
@@ -44,8 +44,11 @@ var configInitCmd = &cobra.Command{
 		}
 
 		if strings.TrimSpace(configInitOutput) == "" {
-			_, err = cmd.OutOrStdout().Write(payload)
-			return err
+			if _, err = cmd.OutOrStdout().Write(payload); err != nil {
+				return err
+			}
+			cmd.PrintErrln(guidance)
+			return nil
 		}
 
 		outputPath := configInitOutput
@@ -71,6 +74,7 @@ var configInitCmd = &cobra.Command{
 		}
 
 		cmd.Printf("Wrote starter config to %s\n", outputPath)
+		cmd.PrintErrln(guidance)
 		return nil
 	},
 }
@@ -121,7 +125,7 @@ var configValidateCmd = &cobra.Command{
 	},
 }
 
-func buildInitConfig(provider, email, name string, oauth2 bool) (map[string]any, error) {
+func buildInitConfig(provider, email, name string, oauth2 bool) (map[string]any, string, error) {
 	provider = strings.TrimSpace(strings.ToLower(provider))
 	canonical := map[string]string{
 		"google":    "gmail",
@@ -131,9 +135,10 @@ func buildInitConfig(provider, email, name string, oauth2 bool) (map[string]any,
 		"yahoo":     "yahoo",
 		"icloud":    "icloud",
 		"fastmail":  "fastmail",
+		"yandex":    "yandex",
 	}[provider]
 	if canonical == "" {
-		return nil, errors.Errorf("unsupported provider %q", provider)
+		return nil, "", errors.Errorf("unsupported provider %q", provider)
 	}
 
 	if strings.TrimSpace(email) == "" {
@@ -144,7 +149,7 @@ func buildInitConfig(provider, email, name string, oauth2 bool) (map[string]any,
 	}
 
 	if oauth2 && !appconfig.SupportsBuiltInOAuth2(canonical) {
-		return nil, errors.Errorf("provider %q does not have a built-in OAuth2 preset", canonical)
+		return nil, "", errors.Errorf("provider %q does not have a built-in OAuth2 preset", canonical)
 	}
 	if !oauth2 && (canonical == "gmail" || canonical == "outlook") {
 		oauth2 = true
@@ -155,18 +160,23 @@ func buildInitConfig(provider, email, name string, oauth2 bool) (map[string]any,
 		"provider": canonical,
 		"email":    email,
 	}
+
+	// Secrets never go into the generated file. Point the user at the keychain
+	// writer for the next step instead.
+	var guidance string
 	if oauth2 {
-		account["oauth2"] = map[string]any{
-			"client_id":     "your-client-id",
-			"client_secret": "your-client-secret",
-		}
+		account["oauth2"] = map[string]any{"client_id": "your-client-id"}
+		guidance = "Next: store the OAuth2 client secret in your keychain and log in:\n" +
+			"  pstr auth set-secret " + name + "\n" +
+			"  pstr auth login " + name
 	} else {
-		account["password"] = "your-app-password"
+		guidance = "Next: store the app password in your OS keychain:\n" +
+			"  pstr auth set " + name
 	}
 
 	return map[string]any{
 		"accounts": []map[string]any{account},
-	}, nil
+	}, guidance, nil
 }
 
 func placeholderEmail(provider string) string {
@@ -181,6 +191,8 @@ func placeholderEmail(provider string) string {
 		return "your.name@icloud.com"
 	case "fastmail":
 		return "your.name@fastmail.com"
+	case "yandex":
+		return "your.name@yandex.com"
 	default:
 		return "you@example.com"
 	}
