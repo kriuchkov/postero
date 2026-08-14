@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/emersion/go-imap v1.2.1
 	github.com/emersion/go-message v0.18.2
-	github.com/go-faster/errors v0.7.1
+	github.com/go-faster/errors v0.8.0
 	github.com/mattn/go-sqlite3 v1.14.37
 	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.10.2
