@@ -8,7 +8,62 @@ import (
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/zalando/go-keyring"
 )
+
+func TestAPIKeyResolvesFromCmdIgnoringInline(t *testing.T) {
+	cfg := &AIConfig{Providers: map[string]AIProviderConfig{
+		"openai": {Type: "openai", LegacyAPIKey: "inline-key", APIKeyCmd: []string{"echo", "cmd-key"}},
+	}}
+	applyAIDefaults(cfg)
+
+	provider := cfg.Providers["openai"]
+	assert.Equal(t, "cmd-key", provider.APIKey(), "api key must come from api_key_cmd")
+	assert.Empty(t, provider.LegacyAPIKey, "inline api_key must be ignored and cleared")
+}
+
+func TestAPIKeyResolvesFromKeychain(t *testing.T) {
+	keyring.MockInit()
+	require.NoError(t, keyring.Set(AIKeyringService, "openai", "kc-key"))
+
+	cfg := &AIConfig{Providers: map[string]AIProviderConfig{"openai": {Type: "openai"}}}
+	applyAIDefaults(cfg)
+	assert.Equal(t, "kc-key", cfg.Providers["openai"].APIKey())
+}
+
+func TestClientSecretResolvesFromCmdIgnoringInline(t *testing.T) {
+	acc := &AccountConfig{
+		Name:   "work",
+		Email:  "work@example.com",
+		OAuth2: OAuth2Config{ClientID: "id", LegacyClientSecret: "inline", ClientSecretCmd: []string{"echo", "cmd-secret"}},
+	}
+	warnAndClearLegacyClientSecret(acc)
+	applyAccountDefaults(acc)
+
+	assert.Equal(t, "cmd-secret", acc.OAuth2.ClientSecret(), "client secret must come from client_secret_cmd")
+	assert.Empty(t, acc.OAuth2.LegacyClientSecret, "inline client_secret must be ignored and cleared")
+}
+
+func TestInlineAISecretsAreNeverPersisted(t *testing.T) {
+	t.Setenv("POSTERO_CONFIG_DIR", t.TempDir())
+	cfg := &Config{
+		AI: AIConfig{Providers: map[string]AIProviderConfig{
+			"openai": {Type: "openai", LegacyAPIKey: "inline-api-key"},
+		}},
+		Accounts: []AccountConfig{{
+			Name:   "work",
+			OAuth2: OAuth2Config{ClientID: "id", LegacyClientSecret: "inline-client-secret"},
+		}},
+	}
+	require.NoError(t, SaveConfig(cfg))
+
+	path, err := ConfigFilePath()
+	require.NoError(t, err)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "inline-api-key", "api keys must never be written to config.yaml")
+	assert.NotContains(t, string(data), "inline-client-secret", "client secrets must never be written to config.yaml")
+}
 
 func TestLoadConfig(t *testing.T) {
 	viper.Reset()
@@ -136,8 +191,6 @@ func TestLoadConfigAppliesProtocolCredentials(t *testing.T) {
 
 	configDir := t.TempDir()
 	t.Setenv("POSTERO_CONFIG_DIR", configDir)
-	t.Setenv("POSTERO_WORK_IMAP_PASSWORD", "imap-secret")
-	t.Setenv("POSTERO_WORK_SMTP_PASSWORD", "smtp-secret")
 
 	configFile := filepath.Join(configDir, "config.yaml")
 	content := []byte(`accounts:
@@ -148,10 +201,12 @@ func TestLoadConfigAppliesProtocolCredentials(t *testing.T) {
       host: "imap.example.com"
       port: 993
       tls: true
+      password_cmd: ["echo", "imap-secret"]
     smtp:
       host: "smtp.example.com"
       port: 587
       tls: true
+      password_cmd: ["echo", "smtp-secret"]
 `)
 	require.NoError(t, os.WriteFile(configFile, content, 0o644))
 
@@ -174,8 +229,10 @@ func TestProtocolCredentialsFallbackToSharedPassword(t *testing.T) {
 		Name:     "Personal",
 		Email:    "me@example.com",
 		Username: "shared-user",
-		Password: "shared-secret",
 	}
+	// A shared secret resolved from the keychain/env/password_cmd is used for both
+	// protocols when neither has its own resolved password.
+	account.resolvedPassword = "shared-secret"
 
 	imapUser, imapPass := account.IMAPCredentials()
 	smtpUser, smtpPass := account.SMTPCredentials()
@@ -323,19 +380,4 @@ func TestPasswordCommandsForProtocol(t *testing.T) {
 	assert.Equal(t, [][]string{{"imap-cmd"}, {"shared-cmd"}}, passwordCommandsForProtocol(account, "IMAP"))
 	assert.Equal(t, [][]string{{"smtp-cmd"}, {"shared-cmd"}}, passwordCommandsForProtocol(account, "SMTP"))
 	assert.Equal(t, [][]string{{"shared-cmd"}}, passwordCommandsForProtocol(account, ""))
-}
-
-func TestPasswordEnvKeys(t *testing.T) {
-	assert.Equal(t,
-		[]string{"POSTERO_WORK_IMAP_PASSWORD", "POSTERO_IMAP_PASSWORD", "POSTERO_WORK_PASSWORD"},
-		passwordEnvKeys("WORK", "IMAP"),
-	)
-	assert.Equal(t,
-		[]string{"POSTERO_SMTP_PASSWORD"},
-		passwordEnvKeys("", "SMTP"),
-	)
-	assert.Equal(t,
-		[]string{"POSTERO_WORK_PASSWORD"},
-		passwordEnvKeys("WORK", ""),
-	)
 }

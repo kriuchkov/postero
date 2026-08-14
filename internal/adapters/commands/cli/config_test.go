@@ -8,7 +8,7 @@ import (
 )
 
 func TestBuildInitConfigDefaultsGmailToOAuth2(t *testing.T) {
-	configDoc, err := buildInitConfig("google", "", "", false)
+	configDoc, guidance, err := buildInitConfig("google", "", "", false)
 
 	require.NoError(t, err)
 	accounts := configDoc["accounts"].([]map[string]any)
@@ -17,33 +17,48 @@ func TestBuildInitConfigDefaultsGmailToOAuth2(t *testing.T) {
 	assert.Equal(t, "gmail", account["provider"])
 	assert.Equal(t, "gmail", account["name"])
 	assert.Equal(t, "your.name@gmail.com", account["email"])
-	_, hasOAuth := account["oauth2"]
-	_, hasPassword := account["password"]
+	oauth, hasOAuth := account["oauth2"].(map[string]any)
 	assert.True(t, hasOAuth)
+	_, hasPassword := account["password"]
 	assert.False(t, hasPassword)
+	_, hasClientSecret := oauth["client_secret"]
+	assert.False(t, hasClientSecret, "the client secret must not be written to the generated config")
+	assert.Contains(t, guidance, "pstr auth login gmail")
 }
 
-func TestBuildInitConfigUsesPasswordForNonOAuthProvider(t *testing.T) {
-	configDoc, err := buildInitConfig("fastmail", "me@example.com", "work", false)
+func TestBuildInitConfigNonOAuthProviderOmitsSecret(t *testing.T) {
+	configDoc, guidance, err := buildInitConfig("fastmail", "me@example.com", "work", false)
 
 	require.NoError(t, err)
 	account := configDoc["accounts"].([]map[string]any)[0]
 	assert.Equal(t, "work", account["name"])
 	assert.Equal(t, "me@example.com", account["email"])
-	assert.Equal(t, "your-app-password", account["password"])
+	_, hasPassword := account["password"]
+	assert.False(t, hasPassword, "no plaintext password may be written to the generated config")
 	_, hasOAuth := account["oauth2"]
 	assert.False(t, hasOAuth)
+	assert.Contains(t, guidance, "pstr auth set work")
+}
+
+func TestBuildInitConfigSupportsYandex(t *testing.T) {
+	configDoc, guidance, err := buildInitConfig("yandex", "", "", false)
+
+	require.NoError(t, err)
+	account := configDoc["accounts"].([]map[string]any)[0]
+	assert.Equal(t, "yandex", account["provider"])
+	assert.Equal(t, "your.name@yandex.com", account["email"])
+	assert.Contains(t, guidance, "pstr auth set yandex")
 }
 
 func TestBuildInitConfigRejectsUnsupportedProvider(t *testing.T) {
-	_, err := buildInitConfig("unknown", "", "", false)
+	_, _, err := buildInitConfig("unknown", "", "", false)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported provider")
 }
 
 func TestBuildInitConfigRejectsOAuth2ForProviderWithoutPreset(t *testing.T) {
-	_, err := buildInitConfig("fastmail", "", "", true)
+	_, _, err := buildInitConfig("fastmail", "", "", true)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not have a built-in OAuth2 preset")

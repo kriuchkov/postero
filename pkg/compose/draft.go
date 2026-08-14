@@ -8,6 +8,7 @@ import (
 
 	"github.com/kriuchkov/postero/internal/core/models"
 	pformat "github.com/kriuchkov/postero/pkg/format"
+	"github.com/kriuchkov/postero/pkg/htmlmd"
 )
 
 type Draft struct {
@@ -85,12 +86,25 @@ func buildQuotedReplyBody(message *models.Message) string {
 		from = "unknown sender"
 	}
 
-	quoted := quoteText(message.Body)
+	quoted := quoteText(readableBody(message))
 	if quoted == "" {
 		quoted = ">"
 	}
 
 	return fmt.Sprintf("\n\nOn %s, %s wrote:\n%s", timestamp, from, quoted)
+}
+
+// readableBody returns the message body as plain, readable text: HTML is
+// converted to Markdown-ish text so a reply or forward never quotes raw tags.
+func readableBody(message *models.Message) string {
+	body := message.Body
+	if strings.TrimSpace(body) == "" && strings.TrimSpace(message.HTML) != "" {
+		body = message.HTML
+	}
+	if htmlmd.LooksLikeHTML(body) {
+		return htmlmd.ToMarkdown(body)
+	}
+	return body
 }
 
 func buildForwardBody(message *models.Message) string {
@@ -108,7 +122,7 @@ Subject: %s
 To: %s
 Cc: %s
 
-%s`, message.From, dateLine, message.Subject, strings.Join(message.To, ", "), strings.Join(message.Cc, ", "), message.Body))
+%s`, message.From, dateLine, message.Subject, strings.Join(message.To, ", "), strings.Join(message.Cc, ", "), readableBody(message)))
 }
 
 func quoteText(body string) string {

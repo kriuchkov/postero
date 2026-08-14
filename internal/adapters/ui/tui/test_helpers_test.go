@@ -130,7 +130,14 @@ func (s *messageServiceStub) GetAllInboxes(_ context.Context, limit, offset int)
 	isSpam := false
 	isDeleted := false
 	return s.filterMessages(
-		models.SearchCriteria{IsDraft: &isDraft, IsSpam: &isSpam, IsDeleted: &isDeleted, Labels: []string{"inbox"}, Limit: limit, Offset: offset},
+		models.SearchCriteria{
+			IsDraft:   &isDraft,
+			IsSpam:    &isSpam,
+			IsDeleted: &isDeleted,
+			Labels:    []string{"inbox"},
+			Limit:     limit,
+			Offset:    offset,
+		},
 	), nil
 }
 
@@ -299,6 +306,7 @@ func testModelWithService(service *messageServiceStub) Model {
 			input.Placeholder = "subject, sender, body"
 			return input
 		}(),
+		aiPromptInput:   textinput.New(),
 		contentViewport: viewport.New(0, 0),
 		help:            help.New(),
 		toInput:         textinput.New(),
@@ -617,11 +625,11 @@ func resolveCmdForTests(cmd tea.Cmd) tea.Cmd {
 }
 
 func resolveBatchMsgForTests(batch tea.BatchMsg) tea.Msg {
-	for index := len(batch) - 1; index >= 0; index-- {
-		if batch[index] == nil {
+	for _, v := range slices.Backward(batch) {
+		if v == nil {
 			continue
 		}
-		msg := batch[index]()
+		msg := v()
 		if nested, ok := msg.(tea.BatchMsg); ok {
 			msg = resolveBatchMsgForTests(nested)
 		}

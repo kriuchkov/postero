@@ -10,6 +10,9 @@ import (
 
 	"github.com/go-faster/errors"
 
+	"github.com/kriuchkov/postero/internal/adapters/ai/aiutil"
+	"github.com/kriuchkov/postero/internal/adapters/ai/anthropic"
+	"github.com/kriuchkov/postero/internal/adapters/ai/command"
 	"github.com/kriuchkov/postero/internal/adapters/ai/gemini"
 	"github.com/kriuchkov/postero/internal/adapters/ai/openai"
 	"github.com/kriuchkov/postero/internal/adapters/mail/smtp"
@@ -17,6 +20,7 @@ import (
 	"github.com/kriuchkov/postero/internal/adapters/storage/sqlite"
 	"github.com/kriuchkov/postero/internal/config"
 	coreerrors "github.com/kriuchkov/postero/internal/core/errors"
+	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
 	"github.com/kriuchkov/postero/internal/services/assistant"
 	"github.com/kriuchkov/postero/internal/services/message"
@@ -62,12 +66,19 @@ func NewMessageRepository() (ports.MessageRepository, *config.Config, error) {
 }
 
 func NewMessageService() (ports.MessageService, *config.Config, error) {
+	service, _, cfg, err := NewMessageServiceWithStore()
+	return service, cfg, err
+}
+
+// NewMessageServiceWithStore also exposes the backing repository so callers
+// (e.g. the TUI sync flow) can persist messages through the same store.
+func NewMessageServiceWithStore() (ports.MessageService, ports.MessageRepository, *config.Config, error) {
 	repo, cfg, err := NewMessageRepository()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	return message.NewServiceWithSMTP(repo, smtpFactory(cfg)), cfg, nil
+	return message.NewServiceWithSMTP(repo, smtpFactory(cfg)), repo, cfg, nil
 }
 
 func NewDraftAssistant() (ports.DraftAssistant, *config.Config, error) {
@@ -93,17 +104,53 @@ func NewDraftAssistantWithConfig(cfg *config.Config) (ports.DraftAssistant, erro
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 	providers := make(map[string]ports.PromptCompletionProvider, len(cfg.AI.Providers))
 	for name, providerCfg := range cfg.AI.Providers {
+		opts := aiProviderOptions(providerCfg)
 		switch strings.ToLower(strings.TrimSpace(providerCfg.Type)) {
 		case "openai":
-			providers[name] = openai.NewProvider(providerCfg, httpClient)
+			providers[name] = openai.NewProvider(opts, httpClient)
 		case "gemini":
-			providers[name] = gemini.NewProvider(providerCfg, httpClient)
+			providers[name] = gemini.NewProvider(opts, httpClient)
+		case "anthropic", "claude":
+			providers[name] = anthropic.NewProvider(opts, httpClient)
+		case "command", "openclaw":
+			providers[name] = command.NewProvider(opts)
 		default:
 			return nil, errors.Errorf("unsupported ai provider type %q for provider %q", providerCfg.Type, name)
 		}
 	}
 
-	return assistant.NewService(cfg.AI, providers), nil
+	return assistant.NewService(aiSettingsFromConfig(cfg.AI), providers), nil
+}
+
+// aiProviderOptions maps the infrastructure provider config into the adapter-owned
+// transport options, keeping the provider adapters free of the config package.
+func aiProviderOptions(cfg config.AIProviderConfig) aiutil.Options {
+	return aiutil.Options{BaseURL: cfg.BaseURL, APIKey: cfg.APIKey(), Command: cfg.Command}
+}
+
+// aiSettingsFromConfig maps the infrastructure AI config into the provider-neutral
+// domain settings the assistant service consumes, keeping the service free of any
+// dependency on the config package.
+func aiSettingsFromConfig(cfg config.AIConfig) models.AISettings {
+	settings := models.AISettings{
+		DefaultComposeTemplate: cfg.DefaultComposeTemplate,
+		DefaultReplyTemplate:   cfg.DefaultReplyTemplate,
+		Providers:              make(map[string]models.AIProviderSettings, len(cfg.Providers)),
+		Templates:              make(map[string]models.AITemplate, len(cfg.Templates)),
+	}
+	for name, provider := range cfg.Providers {
+		settings.Providers[name] = models.AIProviderSettings{Model: provider.Model}
+	}
+	for name, template := range cfg.Templates {
+		settings.Templates[name] = models.AITemplate{
+			Mode:         template.Mode,
+			Provider:     template.Provider,
+			SystemPrompt: template.SystemPrompt,
+			Prompt:       template.Prompt,
+			Temperature:  template.Temperature,
+		}
+	}
+	return settings
 }
 
 func DefaultSender(cfg *config.Config) (string, string) {

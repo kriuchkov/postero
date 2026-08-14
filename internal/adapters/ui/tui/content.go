@@ -2,10 +2,110 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
+
+// readerLinkPattern matches, in one pass, either a Markdown link
+// "[text](https://url)" (groups 1,2) or a remaining bare http(s) URL (group 3).
+// A single pass avoids the second form matching the URL embedded inside the OSC 8
+// escape emitted for the first.
+var readerLinkPattern = regexp.MustCompile(`\[([^\]]*)\]\((https?://[^)\s]+)\)|(https?://[^\s)]+)`)
+
+// collapsedURLLen is the length above which a bare URL is shown as just its host
+// (with "/…" when it has a path), hiding the long query soup by default. The full
+// URL always stays the hyperlink target, so a click still opens it in full.
+const collapsedURLLen = 50
+
+func collapseURL(raw string) string {
+	if lipgloss.Width(raw) <= collapsedURLLen {
+		return raw
+	}
+	s := strings.TrimPrefix(strings.TrimPrefix(raw, "https://"), "http://")
+	host, _, hasPath := strings.Cut(s, "/")
+	switch {
+	case host == "":
+		return truncateText(raw, collapsedURLLen)
+	case hasPath:
+		return host + "/…" // there is a path/query we are hiding
+	default:
+		return host
+	}
+}
+
+// linkifyURLs makes URLs clickable in the reader, emitting each as an OSC 8
+// hyperlink whose target is the full URL (so it stays openable in full even after
+// soft-wrapping). By default the visible label is compact — a Markdown link shows
+// just its text, a long bare URL just its host. When expand is true the label is
+// the full URL instead, so it can be read and selected/copied. A distinct id per
+// link groups wrapped fragments for hover.
+func linkifyURLs(text string, expand bool) string {
+	id := 0
+	return readerLinkPattern.ReplaceAllStringFunc(text, func(match string) string {
+		groups := readerLinkPattern.FindStringSubmatch(match)
+		url, label := groups[3], ""
+		if groups[2] != "" { // Markdown link: use its text, fall back to the host
+			url, label = groups[2], strings.TrimSpace(groups[1])
+		}
+		switch {
+		case expand:
+			label = url
+		case label == "":
+			label = collapseURL(url)
+		}
+		id++
+		return ansi.SetHyperlink(url, "id=pstr"+strconv.Itoa(id)) + label + ansi.ResetHyperlink()
+	})
+}
+
+// markdownBoldPattern and markdownItalicPattern match "**bold**" and "*italic*"
+// emphasis produced by the HTML→Markdown converter.
+var (
+	markdownBoldPattern   = regexp.MustCompile(`\*\*(.+?)\*\*`)
+	markdownItalicPattern = regexp.MustCompile(`\*([^*\n]+?)\*`)
+)
+
+// styleEmphasis renders Markdown emphasis as ANSI in the reader: "**x**" becomes
+// bold, "*x*" italic, and the markers themselves are dropped. It toggles only the
+// bold/italic attributes (SGR 1/22 and 3/23), never a full reset, so it does not
+// clobber the surrounding foreground colour.
+func styleEmphasis(text string) string {
+	text = markdownBoldPattern.ReplaceAllString(text, "\x1b[1m$1\x1b[22m")
+	text = markdownItalicPattern.ReplaceAllString(text, "\x1b[3m$1\x1b[23m")
+	return text
+}
+
+// wrapReaderBody makes clickable, styled, soft-wrapped reader text: URLs become
+// OSC 8 hyperlinks, Markdown emphasis becomes ANSI bold/italic, then the whole
+// body is wrapped to width (long tokens broken) so nothing runs off the right edge
+// while links stay openable in full.
+func wrapReaderBody(text string, width int, expand bool) string {
+	return wrapToWidth(styleEmphasis(linkifyURLs(text, expand)), width)
+}
+
+// wrapToWidth soft-wraps text to width, breaking overly long tokens (e.g. URLs)
+// so the reader never runs a line off the right edge of the viewport.
+func wrapToWidth(text string, width int) string {
+	if width < 1 {
+		return text
+	}
+	return ansi.Wrap(text, width, "")
+}
+
+// wrappedMessageBody returns the selected message body soft-wrapped to width. It
+// serves the cache populated by syncContentViewport when it still matches, so
+// View() (every keystroke/tick) does not re-wrap a large body each frame.
+func (m Model) wrappedMessageBody(width int) string {
+	if width > 0 && width == m.wrappedBodyWidth && m.wrappedBodyExpand == m.expandURLs &&
+		m.currentMessageID() == m.renderedBodyID {
+		return m.wrappedBody
+	}
+	return wrapReaderBody(m.currentMessageBody(), width, m.expandURLs)
+}
 
 func renderContent(m Model, width, height int) string {
 	style := m.styles.Content.Width(width).Height(height)
@@ -28,7 +128,7 @@ func renderContent(m Model, width, height int) string {
 	bodyViewport := m.contentViewport
 	bodyViewport.Width = bodyWidth
 	bodyViewport.Height = bodyHeight
-	bodyViewport.SetContent(m.currentMessageBody())
+	bodyViewport.SetContent(m.wrappedMessageBody(bodyWidth))
 	bodyViewport.Style = lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
 	if bodyViewport.Height < 1 {
 		bodyViewport.Height = 1
@@ -147,23 +247,30 @@ func composeModeHint(composeEditing bool, width int) string {
 }
 
 func contentViewportLayout(m Model, width, height int) (string, int, int) {
-	titleStyle := paneTitleStyle(m, stateContent).MarginBottom(1).Width(max(1, width-4))
-	metaLabelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Width(8)
+	innerWidth := max(1, width-4)
+	titleStyle := paneTitleStyle(m, stateContent).MarginBottom(1).Width(innerWidth)
+	const metaLabelWidth = 8
+	metaLabelStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Width(metaLabelWidth)
 	metaValueStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Text)
+	metaValueWidth := max(1, innerWidth-metaLabelWidth)
 	hintStyle := paneSubtitleStyle(m, stateContent)
 	statusStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.Highlight).Background(m.styles.Palette.Faint).Padding(0, 1)
 	renderHeader := func(label, value string) string {
+		// Keep every meta row on a single line: a long From/To must not wrap and
+		// overflow the pane width or push the body off-screen.
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			metaLabelStyle.Render(label+":"),
-			metaValueStyle.Render(value),
+			metaValueStyle.Render(truncateText(value, metaValueWidth)),
 		)
 	}
 
 	if len(m.messages) == 0 || m.listCursor < 0 || m.listCursor >= len(m.messages) || m.messages[m.listCursor] == nil {
-		return "", max(1, width-4), max(1, height)
+		return "", innerWidth, max(1, height)
 	}
 
 	msg := m.messages[m.listCursor]
+	// A long subject is truncated to one line so the header height stays fixed.
+	subject := truncateText(msg.Subject, innerWidth)
 	from := renderHeader("From", msg.From)
 	to := renderHeader("To", strings.Join(msg.To, ", "))
 	date := renderHeader("Date", msg.Date.Format("Mon, 02 Jan 2006 15:04"))
@@ -171,21 +278,21 @@ func contentViewportLayout(m Model, width, height int) (string, int, int) {
 
 	headerMeta := lipgloss.JoinVertical(lipgloss.Left, from, to, date, mailbox)
 	separator := lipgloss.NewStyle().
-		Width(max(1, width-4)).
+		Width(innerWidth).
 		Border(lipgloss.NormalBorder(), false, false, true, false).
 		BorderForeground(m.styles.Palette.Faint).
 		MarginTop(1).
 		MarginBottom(1).
 		Render("")
-	bodyWidth := max(1, width-4)
+	bodyWidth := innerWidth
 	bodyHeight := max(height-lipgloss.Height(lipgloss.JoinVertical(
 		lipgloss.Left,
-		titleStyle.Render(msg.Subject),
+		titleStyle.Render(subject),
 		renderMessageChips(msg, false),
 		headerMeta,
 		separator,
 	)), 1)
-	statusText := contentViewportStatus(m.contentViewport.YOffset, bodyHeight, contentLineCount(m.currentMessageBody()))
+	statusText := contentViewportStatus(m.contentViewport.YOffset, bodyHeight, contentLineCount(m.wrappedMessageBody(bodyWidth)))
 	statusView := statusStyle.Render(statusText)
 	readerControls := joinHeaderColumns(
 		bodyWidth,
@@ -195,7 +302,7 @@ func contentViewportLayout(m Model, width, height int) (string, int, int) {
 
 	headerBlock := lipgloss.JoinVertical(
 		lipgloss.Left,
-		titleStyle.Render(msg.Subject),
+		titleStyle.Render(subject),
 		renderMessageChips(msg, false),
 		headerMeta,
 		readerControls,

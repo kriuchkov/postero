@@ -39,24 +39,73 @@ var authSetCmd = &cobra.Command{
 	RunE: func(_ *cobra.Command, args []string) error {
 		account := args[0]
 
-		fmt.Printf("Enter password for account '%s': ", account)
-		bytePassword, err := term.ReadPassword(syscall.Stdin)
-		fmt.Println()
+		password, err := readSecret(fmt.Sprintf("Enter password for account '%s': ", account))
 		if err != nil {
-			return errors.Wrap(err, "failed to read password")
+			return err
 		}
 
-		password := strings.TrimSpace(string(bytePassword))
-		if password == "" {
-			return errors.New("password cannot be empty")
-		}
-
-		err = keyring.Set("postero", account, password)
-		if err != nil {
+		if err := keyring.Set("postero", account, password); err != nil {
 			return errors.Wrap(err, "failed to save password to keyring")
 		}
 
 		fmt.Printf("Password for '%s' saved successfully via OS Keychain.\n", account)
+		return nil
+	},
+}
+
+// readSecret prompts and reads a non-empty secret from the terminal without echo.
+func readSecret(prompt string) (string, error) {
+	fmt.Print(prompt)
+	raw, err := term.ReadPassword(syscall.Stdin)
+	fmt.Println()
+	if err != nil {
+		return "", errors.Wrap(err, "failed to read secret")
+	}
+	secret := strings.TrimSpace(string(raw))
+	if secret == "" {
+		return "", errors.New("secret cannot be empty")
+	}
+	return secret, nil
+}
+
+var authSetAICmd = &cobra.Command{
+	Use:   "set-ai [provider]",
+	Short: "Save an AI provider API key in the OS keychain",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		provider := strings.TrimSpace(args[0])
+		if provider == "" {
+			return errors.New("provider name cannot be empty")
+		}
+		secret, err := readSecret(fmt.Sprintf("Enter API key for AI provider '%s': ", provider))
+		if err != nil {
+			return err
+		}
+		if err := keyring.Set(config.AIKeyringService, provider, secret); err != nil {
+			return errors.Wrap(err, "failed to save api key to keyring")
+		}
+		fmt.Printf("API key for AI provider '%s' saved to OS Keychain.\n", provider)
+		return nil
+	},
+}
+
+var authSetSecretCmd = &cobra.Command{
+	Use:   "set-secret [account_name]",
+	Short: "Save an OAuth2 client secret in the OS keychain",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(_ *cobra.Command, args []string) error {
+		account := strings.TrimSpace(args[0])
+		if account == "" {
+			return errors.New("account name cannot be empty")
+		}
+		secret, err := readSecret(fmt.Sprintf("Enter OAuth2 client secret for account '%s': ", account))
+		if err != nil {
+			return err
+		}
+		if err := keyring.Set(config.OAuthSecretKeyringService, account, secret); err != nil {
+			return errors.Wrap(err, "failed to save client secret to keyring")
+		}
+		fmt.Printf("OAuth2 client secret for '%s' saved to OS Keychain.\n", account)
 		return nil
 	},
 }
@@ -69,8 +118,9 @@ var authDelCmd = &cobra.Command{
 		account := args[0]
 
 		err := keyring.Delete("postero", account)
-		// Try deleting oauth2 specific key as well
+		// Try deleting oauth2 token and client-secret keys as well.
 		_ = keyring.Delete("postero-oauth2", account)
+		_ = keyring.Delete(config.OAuthSecretKeyringService, account)
 
 		if err != nil {
 			if errors.Is(err, keyring.ErrNotFound) {
@@ -97,7 +147,7 @@ var authLoginCmd = &cobra.Command{
 		}
 
 		account, ok := appcore.ResolveAccount(cfg, accountName)
-		if !ok || account.OAuth2.ClientID == "" || account.OAuth2.ClientSecret == "" {
+		if !ok || account.OAuth2.ClientID == "" || account.OAuth2.ClientSecret() == "" {
 			account, err = ensureOAuthAccountConfig(cfg, accountName, account, ok)
 			if err != nil {
 				return err
@@ -139,10 +189,14 @@ var authAddCmd = &cobra.Command{
 		}
 		if config.SupportsBuiltInOAuth2(provider) {
 			account.OAuth2 = config.OAuth2Config{
-				ClientID:     authBootstrapClientID,
-				ClientSecret: authBootstrapClientSecret,
-				TenantID:     authBootstrapTenantID,
+				ClientID: authBootstrapClientID,
+				TenantID: authBootstrapTenantID,
 			}
+		}
+
+		// The client secret goes to the OS keychain, never the config file.
+		if err := persistOAuthClientSecret(accountName, authBootstrapClientSecret); err != nil {
+			return err
 		}
 
 		config.UpsertAccount(cfg, account)
@@ -161,10 +215,27 @@ var authAddCmd = &cobra.Command{
 			if strings.TrimSpace(authBootstrapClientID) == "" || strings.TrimSpace(authBootstrapClientSecret) == "" {
 				return errors.New("--client-id and --client-secret are required when using --login")
 			}
-			return runOAuthLogin(context.Background(), accountName, account)
+			// Re-resolve so the client secret just stored in the keychain is loaded.
+			resolved, resolvedOK := appcore.ResolveAccount(cfg, accountName)
+			if !resolvedOK {
+				return errors.Errorf("failed to resolve saved account %q", accountName)
+			}
+			return runOAuthLogin(context.Background(), accountName, resolved)
 		}
 		return nil
 	},
+}
+
+// persistOAuthClientSecret stores an OAuth2 client secret in the OS keychain.
+// Empty secrets are a no-op. The secret is never written to the config file.
+func persistOAuthClientSecret(accountName, secret string) error {
+	if strings.TrimSpace(secret) == "" {
+		return nil
+	}
+	if err := keyring.Set(config.OAuthSecretKeyringService, accountName, secret); err != nil {
+		return errors.Wrap(err, "failed to store oauth2 client secret in keychain")
+	}
+	return nil
 }
 
 func ensureOAuthAccountConfig(
@@ -187,28 +258,32 @@ func ensureOAuthAccountConfig(
 	if strings.TrimSpace(email) == "" {
 		return config.AccountConfig{}, errors.New("--email is required to bootstrap a new OAuth2 account")
 	}
+	name := firstNonEmpty(authBootstrapName, existing.Name, accountName)
 	clientID := firstNonEmpty(authBootstrapClientID, existing.OAuth2.ClientID)
-	clientSecret := firstNonEmpty(authBootstrapClientSecret, existing.OAuth2.ClientSecret)
+	clientSecret := firstNonEmpty(authBootstrapClientSecret, existing.OAuth2.ClientSecret())
 	if strings.TrimSpace(clientID) == "" || strings.TrimSpace(clientSecret) == "" {
 		return config.AccountConfig{}, errors.New("--client-id and --client-secret are required to bootstrap OAuth2 login")
 	}
 
+	// The client secret goes to the OS keychain, never the config file.
+	if err := persistOAuthClientSecret(name, clientSecret); err != nil {
+		return config.AccountConfig{}, err
+	}
+
 	account := config.AccountConfig{
-		Name:     firstNonEmpty(authBootstrapName, existing.Name, accountName),
+		Name:     name,
 		Provider: provider,
 		Email:    email,
 		Username: firstNonEmpty(existing.Username, email),
 		OAuth2: config.OAuth2Config{
-			ClientID:     clientID,
-			ClientSecret: clientSecret,
-			TenantID:     firstNonEmpty(authBootstrapTenantID, existing.OAuth2.TenantID),
-			RedirectURL:  existing.OAuth2.RedirectURL,
+			ClientID:    clientID,
+			TenantID:    firstNonEmpty(authBootstrapTenantID, existing.OAuth2.TenantID),
+			RedirectURL: existing.OAuth2.RedirectURL,
 		},
 	}
 	if exists {
 		account.IMAP = existing.IMAP
 		account.SMTP = existing.SMTP
-		account.Password = existing.Password
 		account.PasswordCmd = append([]string{}, existing.PasswordCmd...)
 	}
 	config.UpsertAccount(cfg, account)
@@ -293,6 +368,8 @@ func init() {
 	authLoginCmd.Flags().StringVar(&authBootstrapTenantID, "tenant-id", "", "OAuth2 tenant ID for Microsoft accounts")
 
 	authCmd.AddCommand(authSetCmd)
+	authCmd.AddCommand(authSetAICmd)
+	authCmd.AddCommand(authSetSecretCmd)
 	authCmd.AddCommand(authDelCmd)
 	authCmd.AddCommand(authAddCmd)
 	authCmd.AddCommand(authLoginCmd)

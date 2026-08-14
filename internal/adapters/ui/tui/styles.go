@@ -13,6 +13,7 @@ type Palette struct {
 	SubText   lipgloss.Color
 	Highlight lipgloss.Color
 	Faint     lipgloss.Color
+	Surface   lipgloss.Color // solid fill behind the selected/hovered card
 }
 
 type Styles struct {
@@ -52,6 +53,7 @@ func StylesFromTheme(theme config.ThemeConfig) Styles {
 		SubText:   lipgloss.Color(defaultThemeValue(theme.SubText, "245")),
 		Highlight: lipgloss.Color(defaultThemeValue(theme.Highlight, "255")),
 		Faint:     lipgloss.Color(defaultThemeValue(theme.Faint, "236")),
+		Surface:   lipgloss.Color(defaultThemeValue(theme.Surface, "236")),
 	}
 
 	return Styles{

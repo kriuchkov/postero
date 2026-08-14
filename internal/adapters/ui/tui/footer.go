@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -44,6 +45,14 @@ func renderFooter(m Model, width int) string {
 			)
 		}
 	}
+	if badge := footerVisualModeBadge(m); badge != "" {
+		statusText = lipgloss.JoinHorizontal(
+			lipgloss.Left,
+			statusText,
+			lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Render("  •  "),
+			badge,
+		)
+	}
 	if badge := footerSearchModeBadge(m); badge != "" {
 		statusText = lipgloss.JoinHorizontal(
 			lipgloss.Left,
@@ -72,6 +81,19 @@ func renderFooter(m Model, width int) string {
 	helpText := footerHelpText(m, width)
 	helpStyle := lipgloss.NewStyle().Foreground(m.styles.Palette.SubText)
 	return style.Render(joinHeaderColumns(width, statusText, helpStyle.Render(helpText)))
+}
+
+func footerVisualModeBadge(m Model) string {
+	if !m.visualActive {
+		return ""
+	}
+	lo, hi := visualRange(m)
+	return lipgloss.NewStyle().
+		Bold(true).
+		Foreground(m.styles.Palette.Highlight).
+		Background(m.styles.Palette.Primary).
+		Padding(0, 1).
+		Render(fmt.Sprintf("-- VISUAL -- %d selected", hi-lo+1))
 }
 
 func footerSearchModeBadge(m Model) string {
@@ -165,6 +187,13 @@ func footerHelpCandidates(m Model) []string {
 		return commandPromptHelpCandidates()
 	}
 
+	if m.visualActive {
+		return []string{
+			"j/k extend • gg/G • d trash • a archive • ! spam • m read • esc/V cancel",
+			"j/k • gg/G • d/a/! • m • esc",
+		}
+	}
+
 	if m.searchActive {
 		return []string{
 			"type to backend-search • enter apply now • esc clear • n/N move through results",
@@ -215,6 +244,7 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(canUseListViewportKeys, "H/M/L"),
 			footerIf(hasSelection, "ctrl+d/u"),
 			footerIf(canMessageActions, "r/R/f"),
+			footerIf(canMessageActions && m.assistant != nil, "A ai"),
 			footerIf(canMessageActions, "a/!/d"),
 			footerIf(canRepeat, ". repeat"),
 			footerIf(canUndo, "u undo"),
@@ -257,7 +287,9 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(hasSelection, "ctrl+d/u"),
 			"h back",
 			footerIf(canMessageActions, "r/R/f"),
+			footerIf(canMessageActions && m.assistant != nil, "A ai"),
 			footerIf(canMessageActions, "a/!/d"),
+			"U urls",
 			footerIf(canRepeat, ". repeat"),
 			footerIf(canUndo, "u undo"),
 			"/ search",
@@ -286,7 +318,7 @@ func footerHelpCandidates(m Model) []string {
 			footerIf(canRepeat, "."),
 		)
 		return []string{long, short, compact}
-	case stateCompose:
+	case stateCompose, stateSetup:
 		return []string{m.help.ShortHelpView(m.keys.ShortHelp())}
 	default:
 		return []string{m.help.ShortHelpView(m.keys.ShortHelp())}

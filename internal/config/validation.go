@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -100,6 +101,20 @@ func ValidateConfig(cfg *Config) []ValidationIssue {
 			})
 		}
 
+		for _, entry := range []struct {
+			path string
+			cmd  []string
+		}{
+			{prefix + ".password_cmd", account.PasswordCmd},
+			{prefix + ".imap.password_cmd", account.IMAP.PasswordCmd},
+			{prefix + ".smtp.password_cmd", account.SMTP.PasswordCmd},
+			{prefix + ".oauth2.client_secret_cmd", account.OAuth2.ClientSecretCmd},
+		} {
+			if insecureLiteralCmd(entry.cmd) {
+				issues = append(issues, insecureCmdIssue(entry.path))
+			}
+		}
+
 		if usesOAuth2(&account) {
 			issues = append(issues, validateOAuthAccount(account, prefix)...)
 		} else if !hasConfigSecret(account) {
@@ -107,8 +122,14 @@ func ValidateConfig(cfg *Config) []ValidationIssue {
 				Severity: "warning",
 				Path:     prefix,
 				Message:  "no password source is configured in the file",
-				Hint:     "Use pstr auth set <account>, password_cmd, environment variables, or inline passwords.",
+				Hint:     "Use pstr auth set <account> or a password_cmd (inline plaintext passwords and env vars are no longer supported).",
 			})
+		}
+	}
+
+	for name, provider := range cfg.AI.Providers {
+		if insecureLiteralCmd(provider.APIKeyCmd) {
+			issues = append(issues, insecureCmdIssue(fmt.Sprintf("ai.providers.%s.api_key_cmd", name)))
 		}
 	}
 
@@ -137,22 +158,45 @@ func validateOAuthAccount(account AccountConfig, prefix string) []ValidationIssu
 			Hint:     "Create an OAuth app for the provider and set client_id.",
 		})
 	}
-	if strings.TrimSpace(account.OAuth2.ClientSecret) == "" {
+	if strings.TrimSpace(account.OAuth2.ClientSecret()) == "" && len(account.OAuth2.ClientSecretCmd) == 0 {
 		issues = append(issues, ValidationIssue{
 			Severity: "error",
 			Path:     prefix + ".oauth2.client_secret",
-			Message:  "OAuth2 client_secret is missing",
-			Hint:     "Create an OAuth app for the provider and set client_secret.",
+			Message:  "OAuth2 client_secret is not available",
+			Hint:     "Store it with `pstr auth set-secret <account>` or set client_secret_cmd.",
 		})
 	}
 	return issues
 }
 
+// insecureLiteralCmd reports whether a *_cmd merely echoes/prints its arguments,
+// which would expose a hardcoded literal secret in the process list (ps). A real
+// secret command reads from a store and takes no secret on its command line.
+func insecureLiteralCmd(cmd []string) bool {
+	if len(cmd) < 2 {
+		return false
+	}
+	switch strings.ToLower(filepath.Base(cmd[0])) {
+	case "echo", "print", "printf":
+		return true
+	default:
+		return false
+	}
+}
+
+func insecureCmdIssue(path string) ValidationIssue {
+	return ValidationIssue{
+		Severity: "error",
+		Path:     path,
+		Message:  "command would expose a literal secret in the process list (ps)",
+		Hint:     "Fetch the secret from a store (pass, security, secret-tool, gpg) or the OS keychain — never echo/print a literal.",
+	}
+}
+
 func hasConfigSecret(account AccountConfig) bool {
-	return strings.TrimSpace(account.Password) != "" ||
-		len(account.PasswordCmd) > 0 ||
-		strings.TrimSpace(account.IMAP.Password) != "" ||
+	// Inline plaintext passwords are no longer read, so password_cmd is the only
+	// in-file secret source (keychain and env vars live outside the config file).
+	return len(account.PasswordCmd) > 0 ||
 		len(account.IMAP.PasswordCmd) > 0 ||
-		strings.TrimSpace(account.SMTP.Password) != "" ||
 		len(account.SMTP.PasswordCmd) > 0
 }

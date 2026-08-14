@@ -3,6 +3,7 @@ package config
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,11 +16,21 @@ import (
 const (
 	authTypeOAuth2       = "oauth2"
 	storageBackendSQLite = "sqlite"
-	providerGmail        = "gmail"
-	providerOutlook      = "outlook"
-	providerYahoo        = "yahoo"
-	providerICloud       = "icloud"
-	providerFastmail     = "fastmail"
+	// Keychain service names for at-rest secrets (the OAuth *token* store lives
+	// in oauth2.go as keyringService = "postero-oauth2"). The exported ones are
+	// used by the auth CLI to write these secrets.
+	passwordKeyringService = "postero"
+	// OAuthSecretKeyringService stores OAuth2 client secrets, keyed by account.
+	OAuthSecretKeyringService = "postero-oauth2-secret" //nolint:gosec // G101: keychain service name, not a credential
+
+	// AIKeyringService stores AI provider API keys, keyed by provider name.
+	AIKeyringService = "postero-ai"
+	providerGmail    = "gmail"
+	providerOutlook  = "outlook"
+	providerYahoo    = "yahoo"
+	providerICloud   = "icloud"
+	providerFastmail = "fastmail"
+	providerYandex   = "yandex"
 )
 
 type providerPreset struct {
@@ -55,11 +66,27 @@ type AIConfig struct {
 }
 
 type AIProviderConfig struct {
-	Type    string `mapstructure:"type"     yaml:"type,omitempty"`
-	APIKey  string `mapstructure:"api_key"  yaml:"api_key,omitempty"`
-	BaseURL string `mapstructure:"base_url" yaml:"base_url,omitempty"`
-	Model   string `mapstructure:"model"    yaml:"model,omitempty"`
+	Type      string   `mapstructure:"type"        yaml:"type,omitempty"`
+	APIKeyCmd []string `mapstructure:"api_key_cmd" yaml:"api_key_cmd,omitempty"`
+	BaseURL   string   `mapstructure:"base_url"    yaml:"base_url,omitempty"`
+	Model     string   `mapstructure:"model"       yaml:"model,omitempty"`
+	// Command is the argv of a local agent CLI for `type: command` / `openclaw`
+	// providers (run without a shell; the prompt is passed on stdin).
+	Command []string `mapstructure:"command" yaml:"command,omitempty"`
+
+	// LegacyAPIKey captures a deprecated inline `api_key:` only so the loader can
+	// warn and ignore it (yaml:"-" keeps it out of every write). API keys are
+	// billable secrets — provide them via api_key_cmd or the OS keychain
+	// (`pstr auth set-ai <provider>`).
+	LegacyAPIKey string `mapstructure:"api_key" yaml:"-"`
+
+	// resolvedAPIKey is filled at load from api_key_cmd or the keychain; never serialized.
+	resolvedAPIKey string
 }
+
+// APIKey returns the resolved provider key (keychain or api_key_cmd). It is never
+// read from the config file.
+func (p AIProviderConfig) APIKey() string { return p.resolvedAPIKey }
 
 type AITemplateConfig struct {
 	Mode         string  `mapstructure:"mode"          yaml:"mode,omitempty"`
@@ -80,38 +107,64 @@ type AccountConfig struct {
 	IMAP        IMAPConfig   `mapstructure:"imap"         yaml:"imap,omitempty"`
 	SMTP        SMTPConfig   `mapstructure:"smtp"         yaml:"smtp,omitempty"`
 	Username    string       `mapstructure:"username"     yaml:"username,omitempty"`
-	Password    string       `mapstructure:"password"     yaml:"password,omitempty"`
 	PasswordCmd []string     `mapstructure:"password_cmd" yaml:"password_cmd,omitempty"`
 	OAuth2      OAuth2Config `mapstructure:"oauth2"       yaml:"oauth2,omitempty"`
+
+	// LegacyPassword captures a deprecated inline `password:` only so the loader
+	// can warn and ignore it. It is never used for authentication (yaml:"-" keeps
+	// it out of every SaveConfig write). Store secrets in the OS keychain or a
+	// password_cmd instead.
+	LegacyPassword string `mapstructure:"password" yaml:"-"`
+
+	// Secrets resolved at load time (keychain, password_cmd, or OAuth token).
+	// Kept unexported so SaveConfig can never write them back to disk.
+	resolvedIMAPPassword string
+	resolvedSMTPPassword string
+	resolvedPassword     string
 }
 
 type OAuth2Config struct {
-	Provider     string   `mapstructure:"provider"      yaml:"provider,omitempty"`
-	ClientID     string   `mapstructure:"client_id"     yaml:"client_id,omitempty"`
-	ClientSecret string   `mapstructure:"client_secret" yaml:"client_secret,omitempty"`
-	TenantID     string   `mapstructure:"tenant_id"     yaml:"tenant_id,omitempty"` // used mainly for microsoft
-	Scopes       []string `mapstructure:"scopes"        yaml:"scopes,omitempty"`
-	RedirectURL  string   `mapstructure:"redirect_url"  yaml:"redirect_url,omitempty"`
+	Provider        string   `mapstructure:"provider"          yaml:"provider,omitempty"`
+	ClientID        string   `mapstructure:"client_id"         yaml:"client_id,omitempty"`
+	ClientSecretCmd []string `mapstructure:"client_secret_cmd" yaml:"client_secret_cmd,omitempty"`
+	TenantID        string   `mapstructure:"tenant_id"         yaml:"tenant_id,omitempty"` // used mainly for microsoft
+	Scopes          []string `mapstructure:"scopes"            yaml:"scopes,omitempty"`
+	RedirectURL     string   `mapstructure:"redirect_url"      yaml:"redirect_url,omitempty"`
+
+	// LegacyClientSecret captures a deprecated inline `client_secret:` only so the
+	// loader can warn and ignore it (yaml:"-" keeps it out of every write). Store
+	// it via client_secret_cmd or the OS keychain (`pstr auth set-secret <account>`).
+	LegacyClientSecret string `mapstructure:"client_secret" yaml:"-"`
+	// resolvedClientSecret is filled at load from client_secret_cmd or the keychain.
+	resolvedClientSecret string
 }
+
+// ClientSecret returns the resolved OAuth2 client secret (keychain or
+// client_secret_cmd). It is never read from the config file.
+func (o OAuth2Config) ClientSecret() string { return o.resolvedClientSecret }
 
 type IMAPConfig struct {
 	Username    string   `mapstructure:"username"     yaml:"username,omitempty"`
-	Password    string   `mapstructure:"password"     yaml:"password,omitempty"`
 	PasswordCmd []string `mapstructure:"password_cmd" yaml:"password_cmd,omitempty"`
 	AuthType    string   `mapstructure:"auth_type"    yaml:"auth_type,omitempty"` // e.g. "plain" (default), "oauth2"
 	Host        string   `mapstructure:"host"         yaml:"host,omitempty"`
 	Port        int      `mapstructure:"port"         yaml:"port,omitempty"`
 	TLS         bool     `mapstructure:"tls"          yaml:"tls,omitempty"`
+
+	// LegacyPassword: deprecated inline `password:`, ignored (see AccountConfig).
+	LegacyPassword string `mapstructure:"password" yaml:"-"`
 }
 
 type SMTPConfig struct {
 	Username    string   `mapstructure:"username"     yaml:"username,omitempty"`
-	Password    string   `mapstructure:"password"     yaml:"password,omitempty"`
 	PasswordCmd []string `mapstructure:"password_cmd" yaml:"password_cmd,omitempty"`
 	AuthType    string   `mapstructure:"auth_type"    yaml:"auth_type,omitempty"` // e.g. "plain" (default), "oauth2"
 	Host        string   `mapstructure:"host"         yaml:"host,omitempty"`
 	Port        int      `mapstructure:"port"         yaml:"port,omitempty"`
 	TLS         bool     `mapstructure:"tls"          yaml:"tls,omitempty"`
+
+	// LegacyPassword: deprecated inline `password:`, ignored (see AccountConfig).
+	LegacyPassword string `mapstructure:"password" yaml:"-"`
 }
 
 type ThemeConfig struct {
@@ -122,6 +175,7 @@ type ThemeConfig struct {
 	SubText   string `mapstructure:"sub_text"  yaml:"sub_text,omitempty"`
 	Highlight string `mapstructure:"highlight" yaml:"highlight,omitempty"`
 	Faint     string `mapstructure:"faint"     yaml:"faint,omitempty"`
+	Surface   string `mapstructure:"surface"   yaml:"surface,omitempty"`
 }
 
 type TUIConfig struct {
@@ -190,6 +244,7 @@ func readOrCreateConfigFile(v *viper.Viper, configPath string) error {
 			return err
 		}
 		materializeEffectiveConfig(v)
+		v.SetConfigPermissions(0o600) // owner-only; viper otherwise defaults to 0644
 		if err := v.WriteConfigAs(configPath); err != nil {
 			return err
 		}
@@ -211,8 +266,45 @@ func decodeConfig(v *viper.Viper) (*Config, error) {
 func applyConfigDefaults(cfg *Config) {
 	applyAIDefaults(&cfg.AI)
 	for index := range cfg.Accounts {
+		warnAndClearLegacyPassword(&cfg.Accounts[index])
+		warnAndClearLegacyClientSecret(&cfg.Accounts[index])
 		applyAccountDefaults(&cfg.Accounts[index])
 	}
+}
+
+// warnAndClearLegacyClientSecret rejects a deprecated inline `client_secret:`.
+func warnAndClearLegacyClientSecret(account *AccountConfig) {
+	if account == nil || account.OAuth2.LegacyClientSecret == "" {
+		return
+	}
+	account.OAuth2.LegacyClientSecret = ""
+	fmt.Fprintf(os.Stderr,
+		"postero: ignoring inline plaintext oauth2 client_secret for %q — it is no longer used. "+
+			"Store it with `pstr auth set-secret %s` or a client_secret_cmd.\n",
+		firstNonEmpty(account.Name, account.Email, "account"), account.Name)
+}
+
+// warnAndClearLegacyPassword rejects a deprecated inline `password:` value: it is
+// never used for authentication. The user is told to migrate to the keychain,
+// password_cmd, or an environment variable, and the value is dropped in memory.
+func warnAndClearLegacyPassword(account *AccountConfig) {
+	if account == nil {
+		return
+	}
+	hadInline := account.LegacyPassword != "" ||
+		account.IMAP.LegacyPassword != "" ||
+		account.SMTP.LegacyPassword != ""
+	account.LegacyPassword = ""
+	account.IMAP.LegacyPassword = ""
+	account.SMTP.LegacyPassword = ""
+	if !hadInline {
+		return
+	}
+	name := firstNonEmpty(account.Name, account.Email, "account")
+	fmt.Fprintf(os.Stderr,
+		"postero: ignoring inline plaintext password for %q — it is no longer used. "+
+			"Store the secret with `pstr auth set %s` or a password_cmd.\n",
+		name, account.Name)
 }
 
 func UsedConfigFile() string {
@@ -256,15 +348,26 @@ func applyAccountDefaults(account *AccountConfig) {
 	if account.SMTP.Username == "" {
 		account.SMTP.Username = account.Username
 	}
-	if account.IMAP.Password == "" {
-		account.IMAP.Password = resolvePassword(account, "IMAP")
+	// Secrets are never read from the config file; resolve them from the keychain,
+	// a *_cmd, or the OAuth token exclusively.
+	account.resolvedIMAPPassword = resolvePassword(account, "IMAP")
+	account.resolvedSMTPPassword = resolvePassword(account, "SMTP")
+	account.resolvedPassword = resolvePassword(account, "")
+	account.OAuth2.resolvedClientSecret = resolveClientSecret(account)
+}
+
+// resolveClientSecret resolves an account's OAuth2 client secret from its
+// client_secret_cmd or the OS keychain. Inline plaintext is never read.
+func resolveClientSecret(account *AccountConfig) string {
+	if secret := execPasswordCmd(account.OAuth2.ClientSecretCmd); secret != "" {
+		return secret
 	}
-	if account.SMTP.Password == "" {
-		account.SMTP.Password = resolvePassword(account, "SMTP")
+	if strings.TrimSpace(account.Name) != "" {
+		if secret, err := keyring.Get(OAuthSecretKeyringService, account.Name); err == nil && secret != "" {
+			return secret
+		}
 	}
-	if account.Password == "" {
-		account.Password = resolvePassword(account, "")
-	}
+	return ""
 }
 
 func applyAIDefaults(cfg *AIConfig) {
@@ -285,9 +388,44 @@ func applyAIDefaults(cfg *AIConfig) {
 			if provider.BaseURL == "" {
 				provider.BaseURL = "https://generativelanguage.googleapis.com/v1beta"
 			}
+		case "anthropic", "claude":
+			if provider.BaseURL == "" {
+				provider.BaseURL = "https://api.anthropic.com/v1"
+			}
+		case "openclaw":
+			if len(provider.Command) == 0 {
+				provider.Command = []string{"openclaw", "agent", "exec", "--message-file", "-"}
+			}
 		}
+		warnAndClearLegacyAPIKey(name, &provider)
+		provider.resolvedAPIKey = resolveAPIKey(name, provider)
 		cfg.Providers[name] = provider
 	}
+}
+
+// resolveAPIKey resolves a provider's API key from its api_key_cmd or the OS
+// keychain. Inline plaintext keys are never read.
+func resolveAPIKey(providerName string, p AIProviderConfig) string {
+	if key := execPasswordCmd(p.APIKeyCmd); key != "" {
+		return key
+	}
+	if strings.TrimSpace(providerName) != "" {
+		if secret, err := keyring.Get(AIKeyringService, providerName); err == nil && secret != "" {
+			return secret
+		}
+	}
+	return ""
+}
+
+func warnAndClearLegacyAPIKey(providerName string, p *AIProviderConfig) {
+	if p == nil || p.LegacyAPIKey == "" {
+		return
+	}
+	p.LegacyAPIKey = ""
+	fmt.Fprintf(os.Stderr,
+		"postero: ignoring inline plaintext api_key for AI provider %q — it is no longer used. "+
+			"Store it with `pstr auth set-ai %s` or an api_key_cmd.\n",
+		providerName, providerName)
 }
 
 func applyProviderDefaults(account *AccountConfig) {
@@ -303,7 +441,10 @@ func applyProviderDefaults(account *AccountConfig) {
 
 	applyIMAPNetworkDefaults(&account.IMAP, preset.imapHost, preset.imapPort, preset.imapTLS)
 	applySMTPNetworkDefaults(&account.SMTP, preset.smtpHost, preset.smtpPort, preset.smtpTLS)
-	if account.OAuth2.Provider == "" && preset.oauthProvider != "" {
+	// Only backfill the OAuth provider when the account actually opts into
+	// OAuth2; otherwise an app-password gmail/outlook account would be forced
+	// onto a broken oauth2 auth path.
+	if account.OAuth2.Provider == "" && preset.oauthProvider != "" && accountOptsIntoOAuth2(account) {
 		account.OAuth2.Provider = preset.oauthProvider
 	}
 	if usesOAuth2(account) {
@@ -350,6 +491,16 @@ func applyOAuthDefaults(account *AccountConfig, authType string, scopes []string
 	}
 }
 
+// accountOptsIntoOAuth2 reports whether the user explicitly configured OAuth2
+// (credentials or auth_type), as opposed to a provider merely supporting it.
+func accountOptsIntoOAuth2(account *AccountConfig) bool {
+	if account == nil {
+		return false
+	}
+	return account.OAuth2.ClientID != "" || len(account.OAuth2.ClientSecretCmd) > 0 ||
+		account.IMAP.AuthType == authTypeOAuth2 || account.SMTP.AuthType == authTypeOAuth2
+}
+
 func usesOAuth2(account *AccountConfig) bool {
 	if account == nil {
 		return false
@@ -359,7 +510,7 @@ func usesOAuth2(account *AccountConfig) bool {
 		return true
 	}
 
-	return account.OAuth2.ClientID != "" || account.OAuth2.ClientSecret != "" || account.OAuth2.Provider != ""
+	return account.OAuth2.ClientID != "" || len(account.OAuth2.ClientSecretCmd) > 0 || account.OAuth2.Provider != ""
 }
 
 func canonicalProvider(account *AccountConfig) string {
@@ -388,9 +539,17 @@ func canonicalProviderName(value string) string {
 		return providerICloud
 	case "fastmail":
 		return providerFastmail
+	case "yandex", "ya":
+		return providerYandex
 	default:
 		return ""
 	}
+}
+
+// ProviderForEmail reports the provider preset inferred from the email
+// domain, or "" when the domain is unknown.
+func ProviderForEmail(email string) string {
+	return inferredProviderFromEmail(email)
 }
 
 func inferredProviderFromEmail(email string) string {
@@ -410,6 +569,8 @@ func inferredProviderFromEmail(email string) string {
 		return providerICloud
 	case "fastmail.com":
 		return providerFastmail
+	case "yandex.com", "yandex.ru", "ya.ru", "yandex.by", "yandex.kz", "yandex.ua":
+		return providerYandex
 	default:
 		return ""
 	}
@@ -436,16 +597,16 @@ func StorageBackend(cfg *Config) string {
 }
 
 func (a AccountConfig) IMAPCredentials() (string, string) {
-	return accountCredentials(a.IMAP.Username, a.IMAP.Password, a)
+	return accountCredentials(a.IMAP.Username, a.resolvedIMAPPassword, a)
 }
 
 func (a AccountConfig) SMTPCredentials() (string, string) {
-	return accountCredentials(a.SMTP.Username, a.SMTP.Password, a)
+	return accountCredentials(a.SMTP.Username, a.resolvedSMTPPassword, a)
 }
 
 func accountCredentials(protocolUsername, protocolPassword string, account AccountConfig) (string, string) {
 	username := firstNonEmpty(protocolUsername, account.Username, account.Email)
-	password := firstNonEmpty(protocolPassword, account.Password)
+	password := firstNonEmpty(protocolPassword, account.resolvedPassword)
 	return username, password
 }
 
@@ -482,21 +643,15 @@ func resolvePassword(account *AccountConfig, protocol string) string {
 		}
 	}
 
-	name := normalizedAccountName(account.Name)
-
-	// Try to resolve using OS Keychain via Built-in Keyring integration
-	if name != "" {
-		if secret, err := keyring.Get("postero", account.Name); err == nil && secret != "" {
+	// OS keychain, written by `pstr auth set` or the setup wizard. This is the
+	// only at-rest secret store Postero uses — passwords never come from the
+	// config file or environment variables.
+	if strings.TrimSpace(account.Name) != "" {
+		if secret, err := keyring.Get(passwordKeyringService, account.Name); err == nil && secret != "" {
 			return secret
 		}
 	}
-
-	for _, key := range passwordEnvKeys(name, protocol) {
-		if password := os.Getenv(key); password != "" {
-			return password
-		}
-	}
-	return os.Getenv("POSTERO_PASSWORD")
+	return ""
 }
 
 func resolveOAuth2Token(account *AccountConfig, protocol string) string {
@@ -540,25 +695,6 @@ func passwordCommandsForProtocol(account *AccountConfig, protocol string) [][]st
 		commands = append(commands, account.PasswordCmd)
 	}
 	return commands
-}
-
-func passwordEnvKeys(name, protocol string) []string {
-	keys := make([]string, 0, 3)
-	if name != "" && protocol != "" {
-		keys = append(keys, "POSTERO_"+name+"_"+protocol+"_PASSWORD")
-	}
-	if protocol != "" {
-		keys = append(keys, "POSTERO_"+protocol+"_PASSWORD")
-	}
-	if name != "" {
-		keys = append(keys, "POSTERO_"+name+"_PASSWORD")
-	}
-	return keys
-}
-
-func normalizedAccountName(name string) string {
-	value := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
-	return strings.ReplaceAll(value, " ", "_")
 }
 
 func firstNonEmpty(values ...string) string {
@@ -625,6 +761,15 @@ func providerPresetFor(provider string) (providerPreset, bool) {
 			imapPort: 993,
 			imapTLS:  true,
 			smtpHost: "smtp.fastmail.com",
+			smtpPort: 465,
+			smtpTLS:  true,
+		}, true
+	case providerYandex:
+		return providerPreset{
+			imapHost: "imap.yandex.com",
+			imapPort: 993,
+			imapTLS:  true,
+			smtpHost: "smtp.yandex.com",
 			smtpPort: 465,
 			smtpTLS:  true,
 		}, true

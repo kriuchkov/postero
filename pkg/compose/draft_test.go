@@ -46,6 +46,38 @@ func TestBuildReplyAppendsQuotedOriginalWhenBodyProvided(t *testing.T) {
 	assert.Contains(t, draft.Body, "> world")
 }
 
+func TestBuildReplyQuotesReadableTextNotRawHTML(t *testing.T) {
+	message := &models.Message{
+		ID:      "msg-html",
+		Subject: "Invoice",
+		From:    "Billing <billing@example.com>",
+		Body:    `<!DOCTYPE html><html><head><style>p{color:red}</style></head><body><h1>Invoice</h1><p>Amount <b>1234</b></p></body></html>`,
+		Date:    time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
+	}
+
+	draft := BuildReply(message, ReplyOptions{})
+
+	// The quote must be readable text, never raw HTML tags or CSS.
+	assert.NotContains(t, draft.Body, "<html")
+	assert.NotContains(t, draft.Body, "<p>")
+	assert.NotContains(t, draft.Body, "color:red")
+	assert.Contains(t, draft.Body, "> # Invoice")
+	assert.Contains(t, draft.Body, "**1234**")
+}
+
+func TestBuildReplyFallsBackToHTMLFieldWhenBodyEmpty(t *testing.T) {
+	message := &models.Message{
+		From: "a@example.com",
+		HTML: "<p>Hello <b>world</b></p>",
+		Date: time.Date(2026, 3, 20, 10, 0, 0, 0, time.UTC),
+	}
+
+	draft := BuildReply(message, ReplyOptions{})
+
+	assert.NotContains(t, draft.Body, "<p>")
+	assert.Contains(t, draft.Body, "> Hello **world**")
+}
+
 func TestBuildForwardPrefixesSubjectOnce(t *testing.T) {
 	message := &models.Message{Subject: "Fwd: Existing", Body: "payload"}
 

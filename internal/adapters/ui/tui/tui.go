@@ -4,12 +4,14 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func NewModel() Model {
-	return initialModel()
+// NewModel builds the root TUI model from injected dependencies.
+func NewModel(deps Dependencies) Model {
+	return newModel(deps)
 }
 
-func Run() error {
-	p := tea.NewProgram(NewModel(), tea.WithAltScreen())
+// Run starts the Bubble Tea program with the given dependencies.
+func Run(deps Dependencies) error {
+	p := tea.NewProgram(NewModel(deps), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }

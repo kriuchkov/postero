@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/kriuchkov/postero/internal/config"
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/internal/core/ports"
 )
@@ -27,12 +26,12 @@ func (s *stubProvider) CompletePrompt(_ context.Context, request models.PromptCo
 
 func TestGenerateDraftRendersTemplateAndParsesJSON(t *testing.T) {
 	provider := &stubProvider{response: `{"subject":"Follow-up","body":"Thanks for the context."}`}
-	service := NewService(config.AIConfig{
+	service := NewService(models.AISettings{
 		DefaultReplyTemplate: "reply-default",
-		Providers: map[string]config.AIProviderConfig{
+		Providers: map[string]models.AIProviderSettings{
 			"openai": {Model: "gpt-4.1-mini"},
 		},
-		Templates: map[string]config.AITemplateConfig{
+		Templates: map[string]models.AITemplate{
 			"reply-default": {
 				Mode:         ModeReply,
 				Provider:     "openai",
@@ -68,12 +67,12 @@ func TestGenerateDraftRendersTemplateAndParsesJSON(t *testing.T) {
 
 func TestGenerateDraftFallsBackToReplySubject(t *testing.T) {
 	provider := &stubProvider{response: "```json\n{\"body\":\"Sure, happy to help.\"}\n```"}
-	service := NewService(config.AIConfig{
+	service := NewService(models.AISettings{
 		DefaultReplyTemplate: "reply-default",
-		Providers: map[string]config.AIProviderConfig{
+		Providers: map[string]models.AIProviderSettings{
 			"openai": {Model: "gpt-4.1-mini"},
 		},
-		Templates: map[string]config.AITemplateConfig{
+		Templates: map[string]models.AITemplate{
 			"reply-default": {
 				Mode:     ModeReply,
 				Provider: "openai",
@@ -99,8 +98,8 @@ func TestGenerateDraftFallsBackToReplySubject(t *testing.T) {
 }
 
 func TestGenerateDraftRejectsWrongTemplateMode(t *testing.T) {
-	service := NewService(config.AIConfig{
-		Templates: map[string]config.AITemplateConfig{
+	service := NewService(models.AISettings{
+		Templates: map[string]models.AITemplate{
 			"compose-default": {
 				Mode:     ModeCompose,
 				Provider: "openai",

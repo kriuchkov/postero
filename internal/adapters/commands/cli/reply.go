@@ -47,8 +47,8 @@ var replyCmd = &cobra.Command{
 				return coreerrors.AccountNotFound(replyAccount)
 			}
 			draft, err = service.UpdateDraft(context.Background(), draft.ID, &models.UpdateMessageRequest{
-				AccountID: stringPtr(account.Name),
-				From:      stringPtr(account.Email),
+				AccountID: new(account.Name),
+				From:      new(account.Email),
 			})
 			if err != nil {
 				return errors.Wrap(err, "rebind reply draft")

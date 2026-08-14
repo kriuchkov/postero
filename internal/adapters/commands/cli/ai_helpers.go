@@ -56,12 +56,12 @@ func updateDraftWithGeneratedSubject(
 	request := &models.UpdateMessageRequest{}
 	shouldUpdate := false
 	if strings.TrimSpace(subject) != "" {
-		request.Subject = stringPtr(strings.TrimSpace(subject))
+		request.Subject = new(strings.TrimSpace(subject))
 		shouldUpdate = true
 	}
 	if useAccount {
-		request.AccountID = stringPtr(account.Name)
-		request.From = stringPtr(account.Email)
+		request.AccountID = new(account.Name)
+		request.From = new(account.Email)
 		shouldUpdate = true
 	}
 	if !shouldUpdate {

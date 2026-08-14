@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	imail "github.com/emersion/go-message/mail"
 
@@ -62,6 +61,15 @@ func (r *Repository) Connect(ctx context.Context, host string, port int, usernam
 	if useTLS {
 		client, err = imapclient.DialTLS(address, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
 	} else {
+		// Without TLS the LOGIN/XOAUTH2 credentials and all fetched mail travel in
+		// cleartext. Only permit that for loopback hosts (local testing); refuse
+		// for any real server rather than silently exposing the password.
+		if !isLoopbackHost(host) {
+			return errors.Errorf(
+				"refusing to connect to IMAP %q without TLS: credentials would be sent in cleartext — enable tls for this account",
+				host,
+			)
+		}
 		client, err = imapclient.Dial(address)
 	}
 	if err != nil {
@@ -87,6 +95,19 @@ func (r *Repository) Connect(ctx context.Context, host string, port int, usernam
 	r.client = client
 	r.connected = true
 	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP, where a
+// plaintext connection cannot be observed by a network attacker.
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(strings.ToLower(host))
+	if h == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // Disconnect closes the IMAP connection
@@ -132,6 +153,7 @@ func (r *Repository) Fetch(ctx context.Context, mailbox string, limit int) ([]*m
 		goimap.FetchFlags,
 		goimap.FetchInternalDate,
 		goimap.FetchRFC822Size,
+		goimap.FetchUid,
 		section.FetchItem(),
 	}
 	messagesCh := make(chan *goimap.Message, min(limitOrAll(limit, int(to-from+1)), 64))
@@ -149,7 +171,7 @@ func (r *Repository) Fetch(ctx context.Context, mailbox string, limit int) ([]*m
 		default:
 		}
 
-		message, convErr := toModelMessage(fetched, section)
+		message, convErr := toModelMessage(fetched, section, mbox.UidValidity)
 		if convErr != nil {
 			return nil, convErr
 		}
@@ -168,7 +190,7 @@ func (r *Repository) IsConnected() bool {
 	return r.connected
 }
 
-func toModelMessage(message *goimap.Message, section *goimap.BodySectionName) (*models.Message, error) {
+func toModelMessage(message *goimap.Message, section *goimap.BodySectionName, uidValidity uint32) (*models.Message, error) {
 	if message == nil || message.Envelope == nil {
 		return nil, errors.New("imap message envelope is empty")
 	}
@@ -187,7 +209,7 @@ func toModelMessage(message *goimap.Message, section *goimap.BodySectionName) (*
 	}
 
 	result := &models.Message{
-		ID:          envelopeMessageID(message.Envelope, message.SeqNum),
+		ID:          envelopeMessageID(message.Envelope, uidValidity, message.Uid, message.SeqNum),
 		Subject:     message.Envelope.Subject,
 		From:        formatAddresses(message.Envelope.From),
 		To:          convertAddresses(message.Envelope.To),
@@ -313,11 +335,16 @@ func convertAddresses(addresses []*goimap.Address) []string {
 	return result
 }
 
-func envelopeMessageID(envelope *goimap.Envelope, seqNum uint32) string {
+// envelopeMessageID prefers the RFC Message-ID; otherwise it derives a stable ID
+// from UIDVALIDITY and UID so repeated syncs upsert instead of duplicating.
+func envelopeMessageID(envelope *goimap.Envelope, uidValidity, uid, seqNum uint32) string {
 	if envelope != nil && strings.TrimSpace(envelope.MessageId) != "" {
 		return strings.TrimSpace(envelope.MessageId)
 	}
-	return fmt.Sprintf("imap-%d-%d", time.Now().UnixNano(), seqNum)
+	if uid > 0 {
+		return fmt.Sprintf("imap-%d-%d", uidValidity, uid)
+	}
+	return fmt.Sprintf("imap-%d-seq-%d", uidValidity, seqNum)
 }
 
 func hasFlag(flags []string, flag string) bool {

@@ -23,4 +23,18 @@ go.work.sum
 
 .env
 config.yaml
+# The demo ships its own config; keep it tracked despite the rule above.
+!demo/config.yaml
+
+# Local mailbox data — may contain real email content. Never commit.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+postero.db
+.postero/
+
+# OS / editor cruft
+.DS_Store
 
