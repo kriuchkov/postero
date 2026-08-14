@@ -4,6 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # charmbracelet/x/* helper modules are versioned independently and must
+      # move in lockstep with lipgloss/bubbletea. Bumping them alone breaks the
+      # build (e.g. ansi 0.11 changed the ansi.Style API cellbuf relies on), so
+      # let the bubbletea/lipgloss/bubbles bumps pull them in transitively.
+      - dependency-name: "github.com/charmbracelet/x/ansi"
+      - dependency-name: "github.com/charmbracelet/x/cellbuf"
 
   - package-ecosystem: "github-actions"
     directory: "/"
