@@ -56,7 +56,7 @@ var authSetCmd = &cobra.Command{
 // readSecret prompts and reads a non-empty secret from the terminal without echo.
 func readSecret(prompt string) (string, error) {
 	fmt.Print(prompt)
-	raw, err := term.ReadPassword(syscall.Stdin)
+	raw, err := term.ReadPassword(int(syscall.Stdin))
 	fmt.Println()
 	if err != nil {
 		return "", errors.Wrap(err, "failed to read secret")
