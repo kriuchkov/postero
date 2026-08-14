@@ -56,7 +56,10 @@ var authSetCmd = &cobra.Command{
 // readSecret prompts and reads a non-empty secret from the terminal without echo.
 func readSecret(prompt string) (string, error) {
 	fmt.Print(prompt)
-	raw, err := term.ReadPassword(int(syscall.Stdin))
+	// syscall.Stdin is an int on unix but a syscall.Handle (uintptr) on Windows,
+	// so the int() conversion is required for the Windows cross-compile even though
+	// it looks redundant to unconvert when linting on linux.
+	raw, err := term.ReadPassword(int(syscall.Stdin)) //nolint:unconvert // needed for Windows build
 	fmt.Println()
 	if err != nil {
 		return "", errors.Wrap(err, "failed to read secret")
