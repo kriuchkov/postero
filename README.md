@@ -97,6 +97,14 @@ Features include:
 
 ### Installation
 
+#### Homebrew (macOS / Linux)
+
+```bash
+brew install kriuchkov/tap/postero
+```
+
+Installs the `pstr` binary along with shell completions for bash, zsh, and fish. Upgrade later with `brew upgrade postero`.
+
 #### Go Install
 
 ```bash
