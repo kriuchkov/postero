@@ -23,6 +23,12 @@ const completionListLimit = 50
 // sender as the menu description. Completion runs in a fresh process on every
 // TAB press, so any failure degrades to "no suggestions" — never an error.
 func completeMessageIDs(_ *cobra.Command, _ []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	// Completion must be side-effect free: opening the repository creates the
+	// data directory, and without a configured data path that would drop a
+	// ./.postero folder into whatever directory the shell happens to be in.
+	if cfg, err := appcore.LoadConfig(); err != nil || cfg == nil || strings.TrimSpace(cfg.DataPath) == "" {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 	repo, _, err := appcore.NewMessageRepository()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
