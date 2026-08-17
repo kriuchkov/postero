@@ -861,7 +861,10 @@ func TestListShowsFirstCustomTagInline(t *testing.T) {
 	list := renderList(m, 44, 18)
 	clean := regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(list, "")
 
-	assert.Contains(t, clean, "[work] Project Sync Meeting Notes")
+	// The two-account fixture reserves subject-row space for the owner tag, so
+	// the subject truncates and the account tag follows it.
+	assert.Contains(t, clean, "[work] Project Sync Me")
+	assert.Contains(t, clean, "@personal")
 }
 
 func TestRenderListCardRendersTagChipsAndPreview(t *testing.T) {
@@ -883,7 +886,9 @@ func TestRenderListCardRendersTagChipsAndPreview(t *testing.T) {
 
 	assert.Equal(t, lipgloss.Height(clean), cardHeight)
 	assert.Contains(t, clean, "alex@postero.dev")
-	assert.Contains(t, clean, "[work] Project Sync Meeting Notes")
+	// The two-account fixture reserves subject-row space for the owner tag.
+	assert.Contains(t, clean, "[work] Project Sync Me")
+	assert.Contains(t, clean, "@personal")
 	assert.Contains(t, clean, "Draft")
 	assert.Contains(t, clean, "Archive")
 	// Preview sits past the shared left gutter, so at this narrow width it is

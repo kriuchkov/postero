@@ -155,6 +155,46 @@ func TestCardHasNoInterCardMargin(t *testing.T) {
 	assert.Equal(t, 5, listCardHeight(chipped), "the height estimate must match the render")
 }
 
+// TestCardShowsAccountTagInMixedList: with several accounts and no account
+// scope, each card names its owner; scoping to one account (or having a single
+// account) drops the tag.
+func TestCardShowsAccountTagInMixedList(t *testing.T) {
+	m := testModel()
+	m.accountNames = []string{"personal", "work"}
+	msg := cardMessage()
+	msg.AccountID = "work"
+
+	for _, mode := range []listCursorMode{listCursorNone, listCursorActive} {
+		rendered, _ := renderListCard(m, msg, 44, mode)
+		assert.Contains(t, ansi.Strip(rendered), "@work", "mixed list must name the owning account (mode %v)", mode)
+	}
+
+	m.activeAccountID = "work"
+	rendered, _ := renderListCard(m, msg, 44, listCursorNone)
+	assert.NotContains(t, ansi.Strip(rendered), "@work", "account-scoped list needs no tag")
+
+	m.activeAccountID = ""
+	m.accountNames = []string{"work"}
+	rendered, _ = renderListCard(m, msg, 44, listCursorNone)
+	assert.NotContains(t, ansi.Strip(rendered), "@work", "single-account list needs no tag")
+}
+
+// TestCardStripsEmojiVariationSelectors guards the frame-shift bug: VS16/VS15
+// make terminals render a glyph wider or narrower than lipgloss measures it, so
+// a subject like "🏖️" wraps the row and shifts the whole frame during scroll.
+func TestCardStripsEmojiVariationSelectors(t *testing.T) {
+	m := testModel()
+	msg := cardMessage()
+	msg.Subject = "Важное \u2764\ufe0f письмо"
+	msg.From = "Отель \U0001F3D6\ufe0f <hotel@example.com>"
+	msg.Body = "Пляж \U0001F3D6\ufe0f ждёт"
+
+	rendered, _ := renderListCard(m, msg, 44, listCursorNone)
+	clean := ansi.Strip(rendered)
+	assert.NotContains(t, clean, "\ufe0f", "variation selectors must be stripped from card text")
+	assert.Contains(t, clean, "\u2764", "the base glyph itself survives")
+}
+
 func TestMessageStateBadges(t *testing.T) {
 	t.Parallel()
 	assert.Empty(t, messageStateBadges(&models.Message{}))

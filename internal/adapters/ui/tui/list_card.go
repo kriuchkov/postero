@@ -52,7 +52,7 @@ func renderListCard(m Model, msg *models.Message, contentWidth int, cursorMode l
 	cardInnerWidth := max(contentWidth-cardStyle.GetHorizontalFrameSize(), 1)
 
 	// ── plain layout, shared by both paths (no inner ANSI) ─────────────────────
-	sender := strings.TrimSpace(msg.From)
+	sender := sanitizeCellText(strings.TrimSpace(msg.From))
 	if idx := strings.Index(sender, "<"); idx > 0 {
 		sender = strings.TrimSpace(sender[:idx])
 	}
@@ -76,7 +76,7 @@ func renderListCard(m Model, msg *models.Message, contentWidth int, cursorMode l
 	}
 	gap := max(cardInnerWidth-unreadColWidth-lipgloss.Width(sender)-lipgloss.Width(dateStr), 1)
 
-	subject := msg.Subject
+	subject := sanitizeCellText(msg.Subject)
 	if subject == "" {
 		subject = "(No Subject)"
 	}
@@ -85,16 +85,24 @@ func renderListCard(m Model, msg *models.Message, contentWidth int, cursorMode l
 	if tagText != "" {
 		tagPrefix = "[" + tagText + "] "
 	}
+	// When the list mixes mail from several accounts, each card names its owner
+	// on the subject row's right edge — otherwise identical newsletters from two
+	// inboxes are indistinguishable.
+	accountTag := listCardAccountTag(m, msg)
+	accountReserve := 0
+	if accountTag != "" {
+		accountReserve = lipgloss.Width(accountTag) + 1
+	}
 	// Subject and preview sit under the sender text, past the same fixed gutter
 	// that holds the unread dot, so every row shares one left edge.
-	subjectWidth := max(cardInnerWidth-unreadColWidth-lipgloss.Width(tagPrefix), 1)
+	subjectWidth := max(cardInnerWidth-unreadColWidth-lipgloss.Width(tagPrefix)-accountReserve, 1)
 	if lipgloss.Width(subject) > subjectWidth {
 		subject = truncateText(subject, subjectWidth)
 	}
 
-	preview := previewLine(msg.Body, max(cardInnerWidth-unreadColWidth, 1))
+	preview := sanitizeCellText(previewLine(msg.Body, max(cardInnerWidth-unreadColWidth, 1)))
 
-	pieces := cardPieces{dot: dot, sender: sender, gap: gap, dateStr: dateStr, tagPrefix: tagPrefix, subject: subject, preview: preview}
+	pieces := cardPieces{dot: dot, sender: sender, gap: gap, dateStr: dateStr, tagPrefix: tagPrefix, subject: subject, preview: preview, accountTag: accountTag}
 	var rows []string
 	if highlighted {
 		rows = highlightedCardRows(m, cardInnerWidth, pieces, msg)
@@ -117,13 +125,46 @@ func renderListCard(m Model, msg *models.Message, contentWidth int, cursorMode l
 
 // cardPieces holds the plain (unstyled) layout strings shared by both render paths.
 type cardPieces struct {
-	dot       string
-	sender    string
-	gap       int
-	dateStr   string
-	tagPrefix string
-	subject   string
-	preview   string
+	dot        string
+	sender     string
+	gap        int
+	dateStr    string
+	tagPrefix  string
+	subject    string
+	preview    string
+	accountTag string
+}
+
+// sanitizeCellText makes a string width-stable for cell-based layout: emoji
+// variation selectors (U+FE0F/U+FE0E) make many terminals render a glyph one
+// cell wider (or narrower) than lipgloss measures it, so a row that fit on
+// paper wraps in the terminal and shifts the whole frame. Dropping the
+// selectors pins each glyph to its measured width.
+func sanitizeCellText(s string) string {
+	const vs16, vs15 = rune(0xFE0F), rune(0xFE0E)
+	if !strings.ContainsRune(s, vs16) && !strings.ContainsRune(s, vs15) {
+		return s
+	}
+	return strings.Map(func(r rune) rune {
+		if r == vs16 || r == vs15 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// listCardAccountTag names the card's owning account when the list can mix
+// mail from several accounts: more than one account configured and no account
+// scope active in the sidebar.
+func listCardAccountTag(m Model, msg *models.Message) string {
+	if msg == nil || len(m.accountNames) < 2 || strings.TrimSpace(m.activeAccountID) != "" {
+		return ""
+	}
+	account := strings.TrimSpace(msg.AccountID)
+	if account == "" {
+		return ""
+	}
+	return "@" + truncateText(account, 14)
 }
 
 // cardGutter is the fixed left gutter shared by every card row: the unread dot
@@ -136,9 +177,20 @@ const cardGutter = "  "
 func highlightedCardRows(m Model, width int, p cardPieces, msg *models.Message) []string {
 	base := lipgloss.NewStyle().Width(width).Background(m.styles.Palette.Surface)
 	strong := base.Foreground(m.styles.Palette.Highlight).Bold(true)
+	subjectRow := strong.Render(cardGutter + p.tagPrefix + p.subject)
+	if p.accountTag != "" {
+		// Two runs instead of one, but both carry the surface background
+		// explicitly, so the solid fill still has no gaps.
+		text := cardGutter + p.tagPrefix + p.subject
+		gap := max(width-lipgloss.Width(text)-lipgloss.Width(p.accountTag), 1)
+		subjectRow = lipgloss.NewStyle().Background(m.styles.Palette.Surface).Foreground(m.styles.Palette.Highlight).Bold(true).
+			Render(text+strings.Repeat(" ", gap)) +
+			lipgloss.NewStyle().Background(m.styles.Palette.Surface).Foreground(m.styles.Palette.SubText).
+				Render(p.accountTag)
+	}
 	rows := []string{
 		strong.Render(p.dot + " " + p.sender + strings.Repeat(" ", p.gap) + p.dateStr),
-		strong.Render(cardGutter + p.tagPrefix + p.subject),
+		subjectRow,
 	}
 	if badges := messageStateBadges(msg); badges != "" {
 		rows = append(rows, base.Foreground(m.styles.Palette.Primary).Render(cardGutter+badges))
@@ -170,6 +222,12 @@ func plainCardRows(m Model, width int, cursorMode listCursorMode, unread bool, p
 		row2 = lipgloss.NewStyle().Foreground(m.styles.Palette.Primary).Render(p.tagPrefix) + row2
 	}
 	row2 = cardGutter + row2 // align subject under the sender text, past the gutter
+	if p.accountTag != "" {
+		used := len(cardGutter) + lipgloss.Width(p.tagPrefix) + lipgloss.Width(p.subject)
+		gap := max(width-used-lipgloss.Width(p.accountTag), 1)
+		row2 += strings.Repeat(" ", gap) +
+			lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Render(p.accountTag)
+	}
 
 	row3 := cardGutter + lipgloss.NewStyle().Foreground(m.styles.Palette.SubText).Render(p.preview)
 
