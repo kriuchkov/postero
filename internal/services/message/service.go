@@ -14,6 +14,7 @@ import (
 type Service struct {
 	repository  ports.MessageRepository
 	smtpFactory func(accountID string) (ports.SMTPRepository, error)
+	imapFactory func(accountID string) (ports.IMAPRepository, error)
 }
 
 func NewService(repository ports.MessageRepository) *Service {
@@ -22,6 +23,16 @@ func NewService(repository ports.MessageRepository) *Service {
 
 func NewServiceWithSMTP(repository ports.MessageRepository, smtpFactory func(accountID string) (ports.SMTPRepository, error)) *Service {
 	return &Service{repository: repository, smtpFactory: smtpFactory}
+}
+
+// NewServiceWithTransports wires both per-account mail transports: SMTP for
+// sending and IMAP for pushing local actions (e.g. trash moves) to the server.
+func NewServiceWithTransports(
+	repository ports.MessageRepository,
+	smtpFactory func(accountID string) (ports.SMTPRepository, error),
+	imapFactory func(accountID string) (ports.IMAPRepository, error),
+) *Service {
+	return &Service{repository: repository, smtpFactory: smtpFactory, imapFactory: imapFactory}
 }
 
 func (s *Service) GetMessage(ctx context.Context, id string) (*models.Message, error) {
@@ -340,7 +351,12 @@ func (s *Service) MarkAsRead(ctx context.Context, id string) (*models.Message, e
 	return cloneMessage(msg), nil
 }
 
-// ToggleDelete toggles the deleted status.
+// ToggleDelete toggles the deleted status in the local store only, so the
+// action is instant. Propagating a trash move to the IMAP server is a separate,
+// slower step — PushTrashMove — that callers run inline (CLI) or in the
+// background (TUI). Un-trashing stays local-only: after a server move the
+// message's UID in the trash mailbox is unknown, so there is nothing to address
+// a move-back with.
 func (s *Service) ToggleDelete(ctx context.Context, id string) (*models.Message, error) {
 	msg, err := s.repository.GetByID(ctx, id)
 	if err != nil {
@@ -354,6 +370,63 @@ func (s *Service) ToggleDelete(ctx context.Context, id string) (*models.Message,
 		return nil, err
 	}
 	return cloneMessage(msg), nil
+}
+
+// PushTrashMove propagates a locally trashed message to the IMAP server and
+// records its new server location. It no-ops (without error) when the message
+// is no longer trashed — e.g. the user undid the delete before the push ran —
+// or when it has no server copy to move.
+func (s *Service) PushTrashMove(ctx context.Context, id string) (*models.Message, error) {
+	msg, err := s.repository.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if msg == nil {
+		return nil, coreerrors.MessageNotFound(id)
+	}
+	if !msg.IsDeleted {
+		return cloneMessage(msg), nil
+	}
+	trash, err := s.moveToServerTrash(ctx, msg)
+	if err != nil {
+		return nil, err
+	}
+	if trash == "" {
+		return cloneMessage(msg), nil
+	}
+	msg.Mailbox = trash
+	// The server assigned the message a new UID in the trash mailbox (unknown
+	// without COPYUID tracking); clear ours so later server operations never
+	// address the old mailbox with a stale UID.
+	msg.UID = 0
+	if err := s.repository.Save(ctx, msg); err != nil {
+		return nil, err
+	}
+	return cloneMessage(msg), nil
+}
+
+// moveToServerTrash pushes a trash move to the owning account's IMAP server and
+// returns the trash mailbox name. Messages without a server copy (uid 0 —
+// drafts, demo mail, rows synced before UIDs were stored) and setups without an
+// IMAP transport are skipped: the move stays local-only, as before.
+func (s *Service) moveToServerTrash(ctx context.Context, msg *models.Message) (string, error) {
+	if s.imapFactory == nil || msg.UID == 0 || strings.TrimSpace(msg.Mailbox) == "" {
+		return "", nil
+	}
+	imapRepo, err := s.imapFactory(msg.AccountID)
+	if err != nil {
+		return "", err
+	}
+	if imapRepo == nil {
+		return "", nil
+	}
+	defer imapRepo.Disconnect(ctx) //nolint:errcheck // best-effort cleanup after the move.
+
+	trash, err := imapRepo.MoveToTrash(ctx, msg.Mailbox, msg.UID)
+	if err != nil {
+		return "", err
+	}
+	return trash, nil
 }
 
 // ArchiveMessage removes a message from inbox and marks it as archived.
@@ -448,6 +521,8 @@ func cloneMessage(msg *models.Message) *models.Message {
 		HTML:      msg.HTML,
 		Date:      msg.Date,
 		Flags:     msg.Flags,
+		UID:       msg.UID,
+		Mailbox:   msg.Mailbox,
 		Labels:    append([]string{}, msg.Labels...),
 		ThreadID:  msg.ThreadID,
 		IsRead:    msg.IsRead,

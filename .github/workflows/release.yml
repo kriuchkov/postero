@@ -8,7 +8,9 @@ on:
 jobs:
   release:
     name: Release
-    runs-on: ubuntu-latest
+    # macOS runner so goreleaser can build the darwin binaries with cgo — the
+    # default sqlite storage backend (mattn/go-sqlite3) needs it.
+    runs-on: macos-latest
     permissions:
       contents: write
     steps:
@@ -26,3 +28,4 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}

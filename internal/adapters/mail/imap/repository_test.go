@@ -235,10 +235,12 @@ func TestToModelMessageMapsEnvelopeFlagsAndBody(t *testing.T) {
 		},
 	}
 
-	result, err := toModelMessage(imapMsg, section, 100)
+	result, err := toModelMessage(imapMsg, section, "INBOX", 100)
 	require.NoError(t, err)
 
 	assert.Equal(t, "<mapped@example.com>", result.ID)
+	assert.Equal(t, uint32(7), result.UID, "the server UID must be kept for write-backs")
+	assert.Equal(t, "INBOX", result.Mailbox)
 	assert.Equal(t, "<mapped@example.com>", result.ThreadID)
 	assert.Equal(t, "Mapped", result.Subject)
 	assert.Equal(t, "Alice <alice@example.com>", result.From)
@@ -258,10 +260,10 @@ func TestToModelMessageMapsEnvelopeFlagsAndBody(t *testing.T) {
 func TestToModelMessageWithoutEnvelopeFails(t *testing.T) {
 	t.Parallel()
 
-	_, err := toModelMessage(nil, &goimap.BodySectionName{}, 1)
+	_, err := toModelMessage(nil, &goimap.BodySectionName{}, "INBOX", 1)
 	require.Error(t, err)
 
-	_, err = toModelMessage(&goimap.Message{}, &goimap.BodySectionName{}, 1)
+	_, err = toModelMessage(&goimap.Message{}, &goimap.BodySectionName{}, "INBOX", 1)
 	require.Error(t, err)
 }
 
@@ -274,7 +276,7 @@ func TestToModelMessageFallbackIDAndThread(t *testing.T) {
 		Envelope: &goimap.Envelope{Subject: "No message id"},
 	}
 
-	result, err := toModelMessage(imapMsg, &goimap.BodySectionName{}, 55)
+	result, err := toModelMessage(imapMsg, &goimap.BodySectionName{}, "INBOX", 55)
 	require.NoError(t, err)
 	assert.Equal(t, "imap-55-9", result.ID)
 	assert.Equal(t, "imap-55-9", result.ThreadID, "thread id must fall back to the stable id")

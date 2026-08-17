@@ -40,6 +40,10 @@ func (s *imapStub) Fetch(_ context.Context, mailbox string, limit int) ([]*model
 	return s.messages, nil
 }
 
+func (s *imapStub) MoveToTrash(context.Context, string, uint32) (string, error) {
+	return "Trash", nil
+}
+
 func (s *imapStub) IsConnected() bool { return s.connected }
 
 type storeStub struct {
@@ -142,6 +146,52 @@ func TestSyncAccountsUsesBatchSaverWhenAvailable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, store.batches, 1, "a batch-capable store must persist in one call")
 	assert.Len(t, store.batches[0], 2)
+}
+
+type statefulStore struct {
+	storeStub
+
+	existing map[string]*models.Message
+}
+
+func (s *statefulStore) GetByID(_ context.Context, id string) (*models.Message, error) {
+	return s.existing[id], nil
+}
+
+// TestSyncPreservesLocalMessageState guards the "deleted message resurrects
+// into inbox" bug: local-only actions (trash/archive/spam/read/star) must
+// survive a re-sync that fetches the same message from the server again.
+func TestSyncPreservesLocalMessageState(t *testing.T) {
+	t.Parallel()
+
+	imap := &imapStub{messages: []*models.Message{
+		{ID: "imap-100-1"},
+		{ID: "imap-100-2"},
+		{ID: "imap-100-3"},
+	}}
+	store := &statefulStore{existing: map[string]*models.Message{
+		"imap-work-100-1": {ID: "imap-work-100-1", IsDeleted: true, Labels: []string{"inbox"}},
+		"imap-work-100-2": {ID: "imap-work-100-2", IsRead: true, IsStarred: true, Labels: []string{"archive", "проект"}},
+	}}
+	service := NewService(store, func() ports.IMAPRepository { return imap })
+
+	synced, err := service.SyncAccounts(context.Background(), []models.SyncTarget{{AccountName: "work"}})
+	require.NoError(t, err)
+	require.Len(t, synced, 3)
+
+	trashed := synced[0]
+	assert.True(t, trashed.IsDeleted, "a locally trashed message must stay trashed after sync")
+	assert.True(t, trashed.Flags.Deleted)
+
+	archived := synced[1]
+	assert.True(t, archived.IsRead)
+	assert.True(t, archived.IsStarred)
+	assert.Equal(t, []string{"archive", "проект"}, archived.Labels,
+		"local labels (archive moves, user tags) must survive sync; no inbox re-add")
+
+	fresh := synced[2]
+	assert.False(t, fresh.IsDeleted)
+	assert.Equal(t, []string{"inbox"}, fresh.Labels, "an unknown message is adopted into inbox as before")
 }
 
 func TestSyncAccountsHonorsTargetOverrides(t *testing.T) {

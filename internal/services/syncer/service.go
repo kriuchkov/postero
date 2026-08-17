@@ -79,6 +79,7 @@ func (s *Service) syncTarget(ctx context.Context, target models.SyncTarget) ([]*
 
 	for _, msg := range messages {
 		s.adoptMessage(msg, target.AccountName)
+		s.mergeLocalState(ctx, msg)
 	}
 	if err := s.persist(ctx, target.AccountName, messages); err != nil {
 		return nil, err
@@ -126,6 +127,34 @@ func (s *Service) adoptMessage(msg *models.Message, accountName string) {
 		msg.Labels = append(msg.Labels, "draft")
 	} else {
 		msg.Labels = append(msg.Labels, "inbox")
+	}
+}
+
+// mergeLocalState carries local-only message state from the stored copy onto a
+// freshly fetched one, so persisting the fetch doesn't undo the user's actions.
+// IMAP is fetch-only for now — moving a message to trash, archiving, marking as
+// spam/read/starred all happen purely in the local store and never reach the
+// server — so without this merge every sync would resurrect trashed messages
+// back into the inbox (the upsert overwrites labels and flags wholesale). The
+// server stays authoritative for content; the local copy for state.
+func (s *Service) mergeLocalState(ctx context.Context, msg *models.Message) {
+	existing, err := s.store.GetByID(ctx, msg.ID)
+	if err != nil || existing == nil {
+		return
+	}
+	msg.IsDeleted = msg.IsDeleted || existing.IsDeleted
+	msg.IsSpam = msg.IsSpam || existing.IsSpam
+	msg.IsRead = msg.IsRead || existing.IsRead
+	msg.IsStarred = msg.IsStarred || existing.IsStarred
+	msg.Flags.Deleted = msg.IsDeleted
+	msg.Flags.Junk = msg.IsSpam
+	msg.Flags.Seen = msg.IsRead
+	msg.Flags.Flagged = msg.IsStarred
+	// Local labels are authoritative: they encode archive moves and user tags,
+	// and the fetch path only ever stamps the mailbox label (adoptMessage), so
+	// taking the stored set loses nothing from the server.
+	if len(existing.Labels) > 0 {
+		msg.Labels = append([]string{}, existing.Labels...)
 	}
 }
 

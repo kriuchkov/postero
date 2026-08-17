@@ -80,17 +80,26 @@ func (r *Repository) initSchema() error {
 		flags_draft BOOLEAN,
 		flags_deleted BOOLEAN,
 		flags_junk BOOLEAN,
-		attachments TEXT
+		attachments TEXT,
+		uid INTEGER DEFAULT 0,
+		mailbox TEXT DEFAULT ''
 	);
 	`
 	if _, err := r.db.ExecContext(context.Background(), query); err != nil {
 		return err
 	}
 
-	// Best-effort migration for databases created before the attachments column existed.
-	if _, err := r.db.ExecContext(context.Background(), "ALTER TABLE messages ADD COLUMN attachments TEXT"); err != nil &&
-		!strings.Contains(err.Error(), "duplicate column name") {
-		return err
+	// Best-effort migrations for databases created before these columns existed.
+	migrations := []string{
+		"ALTER TABLE messages ADD COLUMN attachments TEXT",
+		"ALTER TABLE messages ADD COLUMN uid INTEGER DEFAULT 0",
+		"ALTER TABLE messages ADD COLUMN mailbox TEXT DEFAULT ''",
+	}
+	for _, stmt := range migrations {
+		if _, err := r.db.ExecContext(context.Background(), stmt); err != nil &&
+			!strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
 	}
 
 	// List and Search always order by date and commonly filter by account; these
@@ -111,7 +120,7 @@ func (r *Repository) GetByID(ctx context.Context, id string) (*models.Message, e
 	query := `
 		SELECT id, account_id, subject, from_addr, to_addrs, cc_addrs, bcc_addrs, body, html, date, labels, thread_id,
 		       is_read, is_spam, is_draft, is_starred, size,
-		       flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk, attachments
+		       flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk, uid, mailbox, attachments
 		FROM messages WHERE id = ?`
 
 	row := r.db.QueryRowContext(ctx, query, id)
@@ -124,7 +133,7 @@ func (r *Repository) List(ctx context.Context, limit, offset int) ([]*models.Mes
 	query := `
 		SELECT id, account_id, subject, from_addr, to_addrs, cc_addrs, bcc_addrs, body, html, date, labels, thread_id,
 		       is_read, is_spam, is_draft, is_starred, size,
-		       flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk
+		       flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk, uid, mailbox
 		FROM messages
 		ORDER BY date DESC
 		LIMIT ? OFFSET ?`
@@ -155,7 +164,7 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 	query := `
 		SELECT id, account_id, subject, from_addr, to_addrs, cc_addrs, bcc_addrs, body, html, date, labels, thread_id,
 		       is_read, is_spam, is_draft, is_starred, size,
-		       flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk
+		       flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk, uid, mailbox
 		FROM messages
 		WHERE 1=1
 	`
@@ -310,8 +319,9 @@ func saveMessage(ctx context.Context, exec execContext, msg *models.Message) err
 		INSERT INTO messages (
 			id, account_id, subject, from_addr, to_addrs, cc_addrs, bcc_addrs, body, html, date, labels, thread_id,
 			is_read, is_spam, is_draft, is_starred, size,
-			flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk, attachments
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			flags_seen, flags_answered, flags_flagged, flags_draft, flags_deleted, flags_junk, attachments,
+			uid, mailbox
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			subject=excluded.subject,
 			from_addr=excluded.from_addr,
@@ -334,7 +344,9 @@ func saveMessage(ctx context.Context, exec execContext, msg *models.Message) err
 			flags_draft=excluded.flags_draft,
 			flags_deleted=excluded.flags_deleted,
 			flags_junk=excluded.flags_junk,
-			attachments=COALESCE(excluded.attachments, messages.attachments)
+			attachments=COALESCE(excluded.attachments, messages.attachments),
+			uid=excluded.uid,
+			mailbox=excluded.mailbox
 	`
 
 	toAddrs, _ := json.Marshal(msg.To)
@@ -379,6 +391,8 @@ func saveMessage(ctx context.Context, exec execContext, msg *models.Message) err
 		msg.Flags.Deleted,
 		msg.Flags.Junk,
 		attachments,
+		msg.UID,
+		msg.Mailbox,
 	)
 	return err
 }
@@ -451,6 +465,8 @@ func (r *Repository) scanMessageInto(row scanner, extra ...any) (*models.Message
 		&msg.Flags.Draft,
 		&msg.Flags.Deleted,
 		&msg.Flags.Junk,
+		&msg.UID,
+		&msg.Mailbox,
 	}
 	dest = append(dest, extra...)
 

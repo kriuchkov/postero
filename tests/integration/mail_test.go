@@ -140,4 +140,41 @@ func TestMailIntegration(t *testing.T) {
 		}
 		assert.True(t, found, "Sent message should be found via IMAP")
 	})
+
+	// Test Positive Scenario: server-side trash move (delete propagation).
+	t.Run("MoveToTrash", func(t *testing.T) {
+		imapRepo := imap.NewRepository()
+		err := imapRepo.Connect(ctx, "127.0.0.1", imapPort, "tester@test.local", "secret", "plain", false)
+		require.NoError(t, err)
+		defer imapRepo.Disconnect(ctx)
+
+		inbox, err := imapRepo.Fetch(ctx, "INBOX", 10)
+		require.NoError(t, err)
+		require.NotEmpty(t, inbox, "the SendAndSyncMail message must still be in INBOX")
+
+		victim := inbox[0]
+		require.NotZero(t, victim.UID, "fetched messages must carry their server UID")
+		require.Equal(t, "INBOX", victim.Mailbox)
+
+		trash, err := imapRepo.MoveToTrash(ctx, victim.Mailbox, victim.UID)
+		require.NoError(t, err)
+		require.NotEmpty(t, trash)
+
+		inboxAfter, err := imapRepo.Fetch(ctx, "INBOX", 10)
+		require.NoError(t, err)
+		for _, m := range inboxAfter {
+			assert.NotEqual(t, victim.UID, m.UID, "moved message must leave INBOX on the server")
+		}
+
+		trashed, err := imapRepo.Fetch(ctx, trash, 10)
+		require.NoError(t, err)
+		found := false
+		for _, m := range trashed {
+			if m.Subject == victim.Subject {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "moved message must appear in the server trash mailbox")
+	})
 }

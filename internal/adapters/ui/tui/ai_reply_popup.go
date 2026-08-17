@@ -41,38 +41,62 @@ func (m Model) submitAIReplyPrompt() (tea.Model, tea.Cmd) {
 
 // renderAIReplyPopup draws the centered modal box (title, the message it replies
 // to, the instruction input, and the key hints).
+//
+// Every cell between the borders must carry an explicit Surface background:
+// lipgloss's outer Background stops at the first inner ANSI reset, so a box
+// composed from separately styled substrings leaves transparent gaps that show
+// the underlying pane through a translucent terminal. Each row is therefore a
+// single style over plain text at the full content width (margins included),
+// and the one row that must contain inner ANSI — the text input — gets the
+// background via the input's own styles instead.
 func (m Model) renderAIReplyPopup() string {
 	p := m.styles.Palette
 	boxWidth := clampInt(m.width-8, 44, 76)
-	inner := max(boxWidth-6, 20) // minus border (2) + padding (4)
+	contentWidth := max(boxWidth-2, 24) // minus the border columns
+	inner := contentWidth - 4           // minus the baked-in 2-cell side margins
 
 	surface := lipgloss.NewStyle().Background(p.Surface)
-	title := surface.Foreground(p.Highlight).Bold(true).Render("Reply with AI")
+	row := surface.Width(contentWidth)
+	margin := "  "
+	blank := row.Render("")
 
-	rows := []string{title, ""}
+	rows := []string{
+		blank,
+		row.Foreground(p.Highlight).Bold(true).Render(margin + "Reply with AI"),
+		blank,
+	}
 	if sel, ok := m.selectedMessage(); ok {
-		rows = append(rows, surface.Foreground(p.SubText).Render("To  "+truncateText(strings.TrimSpace(sel.From), inner-4)))
+		meta := row.Foreground(p.SubText)
+		rows = append(rows, meta.Render(margin+"To  "+truncateText(strings.TrimSpace(sel.From), inner-4)))
 		if subject := strings.TrimSpace(sel.Subject); subject != "" {
-			rows = append(rows, surface.Foreground(p.SubText).Render("Re  "+truncateText(subject, inner-4)))
+			rows = append(rows, meta.Render(margin+"Re  "+truncateText(subject, inner-4)))
 		}
-		rows = append(rows, "")
+		rows = append(rows, blank)
 	}
 
 	input := m.aiPromptInput
-	input.Width = max(inner-2, 8)
+	input.Width = max(inner-lipgloss.Width(input.Prompt)-1, 8)
+	input.PromptStyle = surface.Foreground(p.Primary)
+	input.TextStyle = surface.Foreground(p.Text)
+	input.PlaceholderStyle = surface.Foreground(p.Faint)
+	input.CompletionStyle = surface.Foreground(p.Faint)
+	input.Cursor.Style = surface.Foreground(p.Highlight)
+	input.Cursor.TextStyle = surface
+	inputView := input.View()
+	if pad := contentWidth - len(margin) - lipgloss.Width(inputView); pad > 0 {
+		inputView += surface.Render(strings.Repeat(" ", pad))
+	}
 	rows = append(rows,
-		surface.Render(input.View()),
-		"",
-		surface.Foreground(p.SubText).Render("Enter  generate   ·   Esc  cancel"),
+		surface.Render(margin)+inputView,
+		blank,
+		row.Foreground(p.SubText).Render(margin+"Enter  generate   ·   Esc  cancel"),
+		blank,
 	)
 
 	return lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(p.Primary).
 		BorderBackground(p.Surface).
-		Background(p.Surface).
-		Padding(1, 2).
-		Width(boxWidth).
 		Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 

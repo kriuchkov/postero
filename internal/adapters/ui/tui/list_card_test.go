@@ -99,8 +99,9 @@ func TestSelectedCardKeepsSenderAndDateOnOneLine(t *testing.T) {
 	}
 	require.NotEmpty(t, dateRow, "the date must be rendered")
 	assert.Contains(t, dateRow, "Nikita", "sender and date must share one line (no wrap)")
-	// Exactly sender, subject and preview rows — nothing wrapped onto extra lines.
-	assert.Equal(t, 3, contentRows, "no row may wrap onto an extra line")
+	// Exactly sender, subject, preview and bottom-border rows — nothing wrapped
+	// onto extra lines.
+	assert.Equal(t, 4, contentRows, "no row may wrap onto an extra line")
 }
 
 // TestCardHeightStableAcrossStateAndSelection guards the layout jump the user saw
@@ -138,20 +139,20 @@ func TestUnreadDotShownOnlyForUnread(t *testing.T) {
 }
 
 // TestCardHasNoInterCardMargin guards the tighter list: a card is exactly its
-// content rows tall (3, or 4 with a state chip), with no blank margin row that
-// would space the cards apart.
+// content rows plus the bottom-border separator (4, or 5 with a state chip),
+// with no blank margin row that would space the cards apart.
 func TestCardHasNoInterCardMargin(t *testing.T) {
 	m := testModel()
 
 	plain := &models.Message{ID: "p", From: "a@example.com", Subject: "S", Body: "B", Date: cardMessage().Date, IsRead: true}
 	_, h := renderListCard(m, plain, 44, listCursorNone)
-	assert.Equal(t, 3, h, "a plain card is sender+subject+preview with no margin")
-	assert.Equal(t, 3, listCardHeight(plain), "the height estimate must match the render")
+	assert.Equal(t, 4, h, "a plain card is sender+subject+preview+border with no margin")
+	assert.Equal(t, 4, listCardHeight(plain), "the height estimate must match the render")
 
 	chipped := &models.Message{ID: "c", From: "a@example.com", Subject: "S", Body: "B", Date: cardMessage().Date, IsDraft: true}
 	_, hc := renderListCard(m, chipped, 44, listCursorNone)
-	assert.Equal(t, 4, hc, "a card with a state chip adds exactly one row")
-	assert.Equal(t, 4, listCardHeight(chipped), "the height estimate must match the render")
+	assert.Equal(t, 5, hc, "a card with a state chip adds exactly one row")
+	assert.Equal(t, 5, listCardHeight(chipped), "the height estimate must match the render")
 }
 
 func TestMessageStateBadges(t *testing.T) {

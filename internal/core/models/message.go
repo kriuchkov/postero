@@ -12,17 +12,22 @@ const (
 
 // Message represents an email message in the system
 type Message struct {
-	ID          string        `json:"id,omitempty"`
-	AccountID   string        `json:"account_id,omitempty"`
-	Subject     string        `json:"subject,omitempty"`
-	From        string        `json:"from,omitempty"`
-	To          []string      `json:"to,omitempty"`
-	Cc          []string      `json:"cc,omitempty"`
-	Bcc         []string      `json:"bcc,omitempty"`
-	Body        string        `json:"body,omitempty"`
-	HTML        string        `json:"html,omitempty"`
-	Date        time.Time     `json:"date,omitzero"`
-	Flags       MessageFlags  `json:"flags,omitzero"`
+	ID        string       `json:"id,omitempty"`
+	AccountID string       `json:"account_id,omitempty"`
+	Subject   string       `json:"subject,omitempty"`
+	From      string       `json:"from,omitempty"`
+	To        []string     `json:"to,omitempty"`
+	Cc        []string     `json:"cc,omitempty"`
+	Bcc       []string     `json:"bcc,omitempty"`
+	Body      string       `json:"body,omitempty"`
+	HTML      string       `json:"html,omitempty"`
+	Date      time.Time    `json:"date,omitzero"`
+	Flags     MessageFlags `json:"flags,omitzero"`
+	// UID and Mailbox locate the message on the IMAP server (UID is only unique
+	// within one mailbox), so local actions can be pushed back to it. UID 0 means
+	// the message has no server copy (drafts, demo mail, pre-UID rows).
+	UID         uint32        `json:"uid,omitempty"`
+	Mailbox     string        `json:"mailbox,omitempty"`
 	Labels      []string      `json:"labels,omitempty"`
 	ThreadID    string        `json:"thread_id,omitempty"`
 	IsRead      bool          `json:"is_read,omitempty"`

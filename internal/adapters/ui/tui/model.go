@@ -268,12 +268,13 @@ func (m *Model) applyDemoAccount() {
 }
 
 func (m Model) Init() tea.Cmd {
-	// With real accounts, pull fresh mail from the server on launch (this also
-	// purges any leftover demo data), so the inbox is populated without a manual
-	// refresh — e.g. right after clearing the local store. Otherwise (demo mode /
-	// no accounts) just read whatever is local.
+	// The local store renders immediately — launch must never wait on the
+	// network. With real accounts a server sync additionally runs in the
+	// background (also purging any leftover demo data) and refreshes the list
+	// when it lands, so the inbox still populates without a manual refresh —
+	// e.g. right after clearing the local store.
 	if m.canSyncAccounts() {
-		return tea.Batch(m.loadingTickCmd(), m.syncAccountsCmd())
+		return tea.Batch(m.fetchMessages(), m.syncAccountsCmd())
 	}
 	return m.fetchMessages()
 }

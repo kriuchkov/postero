@@ -1,8 +1,13 @@
 version: 2
 
+before:
+  hooks:
+    - go mod tidy
+
 builds:
   - id: pstr
     main: ./cmd/pstr
+    binary: pstr
     env:
       - CGO_ENABLED=0
     goos:
@@ -12,13 +17,29 @@ builds:
     goarch:
       - amd64
       - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/kriuchkov/postero/internal/adapters/commands/cli.version={{.Version}}
+    # Build darwin natively with cgo so the default sqlite storage backend
+    # (mattn/go-sqlite3) is compiled in. Requires a macOS runner. Linux and
+    # Windows stay CGO-free (pure-Go cross-builds): there the sqlite backend is
+    # unavailable and users fall back to `storage.backend: file`.
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CGO_ENABLED=1
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CGO_ENABLED=1
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     format_overrides:
       - goos: windows
-        format: zip
-    builds:
+        formats: [zip]
+    ids:
       - pstr
     name_template: >-
       {{ .ProjectName }}_
@@ -26,6 +47,34 @@ archives:
       {{- if eq .Arch "amd64" }}x86_64
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Prerelease }}-{{ .Prerelease }}{{ end }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+
+brews:
+  - repository:
+      owner: kriuchkov
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+
+    name: postero
+    description: "Postero (pstr) is a terminal-first email client (TUI + CLI)"
+    homepage: "https://github.com/kriuchkov/postero"
+    license: "GPL-3.0-only"
+    directory: Formula
+    # Shell completions come from the binary itself (cobra), so the formula
+    # generates them for bash/zsh/fish at install time.
+    extra_install: |
+      generate_completions_from_executable(bin/"pstr", "completion")
+    test: |
+      system "#{bin}/pstr", "--version"
 
 release:
   draft: false

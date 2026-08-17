@@ -15,6 +15,7 @@ import (
 	"github.com/kriuchkov/postero/internal/adapters/ai/command"
 	"github.com/kriuchkov/postero/internal/adapters/ai/gemini"
 	"github.com/kriuchkov/postero/internal/adapters/ai/openai"
+	"github.com/kriuchkov/postero/internal/adapters/mail/imap"
 	"github.com/kriuchkov/postero/internal/adapters/mail/smtp"
 	filestore "github.com/kriuchkov/postero/internal/adapters/storage/file"
 	"github.com/kriuchkov/postero/internal/adapters/storage/sqlite"
@@ -78,7 +79,7 @@ func NewMessageServiceWithStore() (ports.MessageService, ports.MessageRepository
 		return nil, nil, nil, err
 	}
 
-	return message.NewServiceWithSMTP(repo, smtpFactory(cfg)), repo, cfg, nil
+	return message.NewServiceWithTransports(repo, smtpFactory(cfg), imapFactory(cfg)), repo, cfg, nil
 }
 
 func NewDraftAssistant() (ports.DraftAssistant, *config.Config, error) {
@@ -174,6 +175,37 @@ func ResolveAccount(cfg *config.Config, selector string) (config.AccountConfig, 
 		}
 	}
 	return config.AccountConfig{}, false
+}
+
+// imapFactory resolves an account into a connected IMAP repository so the
+// message service can push local actions (trash moves) back to the server.
+// Unknown accounts (e.g. demo mail) resolve to (nil, nil): the action stays
+// local-only.
+func imapFactory(cfg *config.Config) func(accountID string) (ports.IMAPRepository, error) {
+	return func(accountID string) (ports.IMAPRepository, error) {
+		account, ok := ResolveAccount(cfg, accountID)
+		if !ok {
+			return nil, nil
+		}
+
+		repo := imap.NewRepository()
+		username, password := account.IMAPCredentials()
+		if password == "" {
+			return nil, coreerrors.PasswordNotConfigured(account.Name)
+		}
+		if err := repo.Connect(
+			context.TODO(),
+			account.IMAP.Host,
+			account.IMAP.Port,
+			username,
+			password,
+			account.IMAP.AuthType,
+			account.IMAP.TLS,
+		); err != nil {
+			return nil, err
+		}
+		return repo, nil
+	}
 }
 
 func smtpFactory(cfg *config.Config) func(accountID string) (ports.SMTPRepository, error) {

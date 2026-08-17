@@ -171,7 +171,7 @@ func (r *Repository) Fetch(ctx context.Context, mailbox string, limit int) ([]*m
 		default:
 		}
 
-		message, convErr := toModelMessage(fetched, section, mbox.UidValidity)
+		message, convErr := toModelMessage(fetched, section, mailbox, mbox.UidValidity)
 		if convErr != nil {
 			return nil, convErr
 		}
@@ -190,7 +190,84 @@ func (r *Repository) IsConnected() bool {
 	return r.connected
 }
 
-func toModelMessage(message *goimap.Message, section *goimap.BodySectionName, uidValidity uint32) (*models.Message, error) {
+// MoveToTrash moves one message (by UID within mailbox) into the server's trash
+// mailbox and returns the trash mailbox name. go-imap's UidMove uses the MOVE
+// extension when the server advertises it and falls back to
+// COPY + STORE \Deleted + EXPUNGE otherwise.
+func (r *Repository) MoveToTrash(ctx context.Context, mailbox string, uid uint32) (string, error) {
+	_ = ctx
+	if !r.connected || r.client == nil {
+		return "", ErrNotConnected
+	}
+	if uid == 0 {
+		return "", errors.New("message has no imap uid")
+	}
+
+	trash, err := r.findTrashMailbox(mailbox)
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := r.client.Select(mailbox, false); err != nil {
+		return "", errors.Wrapf(err, "select mailbox %s", mailbox)
+	}
+	seqset := new(goimap.SeqSet)
+	seqset.AddNum(uid)
+	if err := r.client.UidMove(seqset, trash); err != nil {
+		return "", errors.Wrapf(err, "move uid %d from %s to %s", uid, mailbox, trash)
+	}
+	return trash, nil
+}
+
+// findTrashMailbox resolves the server's trash mailbox: the \Trash special-use
+// mailbox if advertised (RFC 6154), else a well-known name that already exists,
+// else it creates "Trash". The source mailbox is never a candidate.
+func (r *Repository) findTrashMailbox(source string) (string, error) {
+	commonTrashNames := []string{
+		"Trash", "INBOX.Trash", "INBOX/Trash", "[Gmail]/Trash",
+		"Deleted Items", "Deleted Messages",
+	}
+	ch := make(chan *goimap.MailboxInfo, 32)
+	done := make(chan error, 1)
+	go func() {
+		done <- r.client.List("", "*", ch)
+	}()
+	var mailboxes []*goimap.MailboxInfo
+	for info := range ch {
+		mailboxes = append(mailboxes, info)
+	}
+	if err := <-done; err != nil {
+		return "", errors.Wrap(err, "list mailboxes")
+	}
+
+	for _, info := range mailboxes {
+		if strings.EqualFold(info.Name, source) {
+			continue
+		}
+		if slices.ContainsFunc(info.Attributes, func(attr string) bool {
+			return strings.EqualFold(attr, goimap.TrashAttr)
+		}) {
+			return info.Name, nil
+		}
+	}
+	for _, candidate := range commonTrashNames {
+		if strings.EqualFold(candidate, source) {
+			continue
+		}
+		for _, info := range mailboxes {
+			if strings.EqualFold(info.Name, candidate) {
+				return info.Name, nil
+			}
+		}
+	}
+
+	if err := r.client.Create("Trash"); err != nil {
+		return "", errors.Wrap(err, "create Trash mailbox")
+	}
+	return "Trash", nil
+}
+
+func toModelMessage(message *goimap.Message, section *goimap.BodySectionName, mailbox string, uidValidity uint32) (*models.Message, error) {
 	if message == nil || message.Envelope == nil {
 		return nil, errors.New("imap message envelope is empty")
 	}
@@ -210,6 +287,8 @@ func toModelMessage(message *goimap.Message, section *goimap.BodySectionName, ui
 
 	result := &models.Message{
 		ID:          envelopeMessageID(message.Envelope, uidValidity, message.Uid, message.SeqNum),
+		UID:         message.Uid,
+		Mailbox:     mailbox,
 		Subject:     message.Envelope.Subject,
 		From:        formatAddresses(message.Envelope.From),
 		To:          convertAddresses(message.Envelope.To),

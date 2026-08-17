@@ -62,7 +62,15 @@ var trashCmd = newUpdateMessageCommand(
 		if message != nil && message.IsDeleted {
 			return message, nil
 		}
-		return service.ToggleDelete(context.Background(), id)
+		trashed, err := service.ToggleDelete(context.Background(), id)
+		if err != nil {
+			return nil, err
+		}
+		// CLI runs are one-shot processes, so the server move happens inline.
+		if _, err := service.PushTrashMove(context.Background(), id); err != nil {
+			return nil, errors.Wrap(err, "moved to trash locally, but the server move failed")
+		}
+		return trashed, nil
 	},
 )
 
@@ -99,6 +107,7 @@ type messageServiceActions interface {
 	MarkAsRead(ctx context.Context, id string) (*models.Message, error)
 	ToggleStar(ctx context.Context, id string) (*models.Message, error)
 	ToggleDelete(ctx context.Context, id string) (*models.Message, error)
+	PushTrashMove(ctx context.Context, id string) (*models.Message, error)
 	ArchiveMessage(ctx context.Context, id string) (*models.Message, error)
 	MarkAsSpam(ctx context.Context, id string) (*models.Message, error)
 	DeleteMessage(ctx context.Context, id string) error

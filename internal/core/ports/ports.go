@@ -97,6 +97,11 @@ type MessageService interface {
 	ToggleStar(ctx context.Context, id string) (*models.Message, error)
 	MarkAsRead(ctx context.Context, id string) (*models.Message, error)
 	ToggleDelete(ctx context.Context, id string) (*models.Message, error)
+	// PushTrashMove propagates a locally trashed message to the IMAP server.
+	// It is split from ToggleDelete so the (slow) network round-trip can run
+	// outside the UI loop; it no-ops when the message is no longer trashed or
+	// has no server copy.
+	PushTrashMove(ctx context.Context, id string) (*models.Message, error)
 	ArchiveMessage(ctx context.Context, id string) (*models.Message, error)
 	MarkAsSpam(ctx context.Context, id string) (*models.Message, error)
 	RestoreMessage(ctx context.Context, snapshot *models.Message) (*models.Message, error)
@@ -113,6 +118,10 @@ type IMAPRepository interface {
 
 	// Fetch retrieves messages from a mailbox
 	Fetch(ctx context.Context, mailbox string, limit int) ([]*models.Message, error)
+
+	// MoveToTrash moves a message (identified by its UID within mailbox) into the
+	// server's trash mailbox and returns the trash mailbox name it resolved.
+	MoveToTrash(ctx context.Context, mailbox string, uid uint32) (string, error)
 
 	// IsConnected returns whether the connection is active
 	IsConnected() bool

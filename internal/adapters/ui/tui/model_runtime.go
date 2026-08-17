@@ -126,6 +126,26 @@ type demoSeededMsg struct {
 	err   error
 }
 
+// trashPushedMsg reports the background IMAP move of one trashed message.
+type trashPushedMsg struct {
+	id  string
+	err error
+}
+
+// pushTrashMoveCmd propagates a local trash to the IMAP server off the update
+// loop, so the delete key stays instant while the network round-trip runs in
+// the background. PushTrashMove no-ops if the user undoes the delete first.
+func (m Model) pushTrashMoveCmd(id string) tea.Cmd {
+	service := m.service
+	if service == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_, err := service.PushTrashMove(context.Background(), id)
+		return trashPushedMsg{id: id, err: err}
+	}
+}
+
 // demoSeedCmd loads sample messages into the local store so the app can be
 // explored without a real account.
 func (m Model) demoSeedCmd() tea.Cmd {

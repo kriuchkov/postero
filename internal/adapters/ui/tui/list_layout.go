@@ -247,8 +247,8 @@ func listCardHeight(msg *models.Message) int {
 		return 0
 	}
 
-	// sender + subject + preview rows; no inter-card margin.
-	height := 3
+	// sender + subject + preview rows + bottom border; no inter-card margin.
+	height := 4
 	if renderMessageChips(msg, false) != "" {
 		height++
 	}

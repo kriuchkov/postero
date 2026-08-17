@@ -3,6 +3,7 @@ package message
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -721,6 +722,115 @@ func TestToggleDeleteTogglesOnAndOff(t *testing.T) {
 	restored, err := svc.ToggleDelete(context.Background(), "msg-del-toggle")
 	require.NoError(t, err)
 	assert.False(t, restored.IsDeleted)
+}
+
+type imapStub struct {
+	moved        []string // "<mailbox>/<uid>" per MoveToTrash call
+	moveErr      error
+	trashName    string
+	disconnected bool
+}
+
+func (s *imapStub) Connect(_ context.Context, _ string, _ int, _, _ string, _ string, _ bool) error {
+	return nil
+}
+func (s *imapStub) Disconnect(_ context.Context) error { s.disconnected = true; return nil }
+func (s *imapStub) Fetch(_ context.Context, _ string, _ int) ([]*models.Message, error) {
+	return nil, nil
+}
+func (s *imapStub) IsConnected() bool { return true }
+func (s *imapStub) MoveToTrash(_ context.Context, mailbox string, uid uint32) (string, error) {
+	if s.moveErr != nil {
+		return "", s.moveErr
+	}
+	s.moved = append(s.moved, fmt.Sprintf("%s/%d", mailbox, uid))
+	if s.trashName == "" {
+		return "Trash", nil
+	}
+	return s.trashName, nil
+}
+
+func imapFactoryFor(stub *imapStub) func(string) (ports.IMAPRepository, error) {
+	return func(string) (ports.IMAPRepository, error) { return stub, nil }
+}
+
+// TestToggleDeleteNeverTouchesTheServer: the toggle is the instant, local half
+// of a delete — the network round-trip lives in PushTrashMove.
+func TestToggleDeleteNeverTouchesTheServer(t *testing.T) {
+	repo := mocks.NewMockMessageRepository(t)
+	repo.On("GetByID", context.Background(), "m1").
+		Return(&models.Message{ID: "m1", AccountID: "work", UID: 42, Mailbox: "INBOX"}, nil).Once()
+	repo.On("Save", context.Background(), mock.Anything).Return(nil).Once()
+
+	imap := &imapStub{}
+	svc := NewServiceWithTransports(repo, nil, imapFactoryFor(imap))
+
+	deleted, err := svc.ToggleDelete(context.Background(), "m1")
+	require.NoError(t, err)
+	assert.True(t, deleted.IsDeleted)
+	assert.Empty(t, imap.moved)
+}
+
+// TestPushTrashMoveMovesOnServer: pushing a locally trashed message must move
+// it on the IMAP server and record the new server location (trash mailbox, UID
+// unknown → 0).
+func TestPushTrashMoveMovesOnServer(t *testing.T) {
+	repo := mocks.NewMockMessageRepository(t)
+	msg := &models.Message{ID: "m1", AccountID: "work", UID: 42, Mailbox: "INBOX", IsDeleted: true}
+	repo.On("GetByID", context.Background(), "m1").Return(msg, nil).Once()
+	repo.On("Save", context.Background(), mock.MatchedBy(func(m *models.Message) bool {
+		return m.IsDeleted && m.Mailbox == "Deleted Items" && m.UID == 0
+	})).Return(nil).Once()
+
+	imap := &imapStub{trashName: "Deleted Items"}
+	svc := NewServiceWithTransports(repo, nil, imapFactoryFor(imap))
+
+	pushed, err := svc.PushTrashMove(context.Background(), "m1")
+	require.NoError(t, err)
+	assert.Equal(t, "Deleted Items", pushed.Mailbox)
+	assert.Zero(t, pushed.UID)
+	assert.Equal(t, []string{"INBOX/42"}, imap.moved)
+	assert.True(t, imap.disconnected, "the per-action IMAP connection must be closed")
+}
+
+// TestPushTrashMoveSurfacesServerFailure: a failed server move must surface as
+// an error with no local Save, so the caller can report it honestly.
+func TestPushTrashMoveSurfacesServerFailure(t *testing.T) {
+	repo := mocks.NewMockMessageRepository(t)
+	msg := &models.Message{ID: "m1", AccountID: "work", UID: 42, Mailbox: "INBOX", IsDeleted: true}
+	repo.On("GetByID", context.Background(), "m1").Return(msg, nil).Once()
+
+	imap := &imapStub{moveErr: errors.New("server unavailable")}
+	svc := NewServiceWithTransports(repo, nil, imapFactoryFor(imap))
+
+	_, err := svc.PushTrashMove(context.Background(), "m1")
+	require.ErrorContains(t, err, "server unavailable")
+	repo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
+}
+
+// TestPushTrashMoveSkipsWhenNothingToMove: the push no-ops for messages that
+// were un-trashed before it ran (the undo race) and for messages without a
+// server copy (uid 0: drafts, demo mail, pre-uid rows).
+func TestPushTrashMoveSkipsWhenNothingToMove(t *testing.T) {
+	repo := mocks.NewMockMessageRepository(t)
+	repo.On("GetByID", context.Background(), "undone").
+		Return(&models.Message{ID: "undone", AccountID: "work", UID: 42, Mailbox: "INBOX"}, nil).Once()
+	repo.On("GetByID", context.Background(), "local").
+		Return(&models.Message{ID: "local", AccountID: "work", IsDeleted: true}, nil).Once()
+
+	imap := &imapStub{}
+	svc := NewServiceWithTransports(repo, nil, imapFactoryFor(imap))
+
+	undone, err := svc.PushTrashMove(context.Background(), "undone")
+	require.NoError(t, err)
+	assert.False(t, undone.IsDeleted)
+
+	local, err := svc.PushTrashMove(context.Background(), "local")
+	require.NoError(t, err)
+	assert.True(t, local.IsDeleted)
+
+	assert.Empty(t, imap.moved, "no server call without a trashed message and a server copy")
+	repo.AssertNotCalled(t, "Save", mock.Anything, mock.Anything)
 }
 
 func TestToggleDeleteReturnsNotFoundError(t *testing.T) {

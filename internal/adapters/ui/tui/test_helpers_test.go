@@ -36,6 +36,7 @@ type messageServiceStub struct {
 	deleteCalls       []string
 	deleteErr         error
 	toggleDeleteCalls []string
+	pushTrashCalls    []string
 	toggleDeleteErr   error
 	lastLabelQuery    string
 	lastSearch        models.SearchCriteria
@@ -218,6 +219,11 @@ func (s *messageServiceStub) ToggleDelete(_ context.Context, id string) (*models
 			return msg, nil
 		}
 	}
+	return &models.Message{ID: id, IsDeleted: true}, nil
+}
+
+func (s *messageServiceStub) PushTrashMove(_ context.Context, id string) (*models.Message, error) {
+	s.pushTrashCalls = append(s.pushTrashCalls, id)
 	return &models.Message{ID: id, IsDeleted: true}, nil
 }
 

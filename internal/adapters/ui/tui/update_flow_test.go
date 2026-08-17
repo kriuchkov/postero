@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -11,8 +12,49 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/kriuchkov/postero/internal/config"
 	"github.com/kriuchkov/postero/internal/core/models"
 )
+
+type syncerStub struct {
+	calls int
+}
+
+func (s *syncerStub) SyncAll(context.Context) ([]*models.Message, error) {
+	s.calls++
+	return nil, nil
+}
+
+// TestInitLoadsLocalMessagesWithoutWaitingForSync guards the slow-launch
+// regression: with real accounts configured, Init must batch an immediate
+// local-store load alongside the background server sync — never gate the list
+// on the network round-trip.
+func TestInitLoadsLocalMessagesWithoutWaitingForSync(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	syncer := &syncerStub{}
+	m.syncer = syncer
+	m.config = &config.Config{Accounts: []config.AccountConfig{{Name: "work"}}}
+	require.True(t, m.canSyncAccounts())
+
+	cmd := m.Init()
+	require.NotNil(t, cmd)
+	batch, isBatch := cmd().(tea.BatchMsg)
+	require.True(t, isBatch, "Init must batch the local load with the background sync")
+
+	foundLocal := false
+	for _, sub := range batch {
+		if sub == nil {
+			continue
+		}
+		if loaded, isLoad := sub().(messagesLoadedMsg); isLoad {
+			foundLocal = true
+			assert.NotEmpty(t, loaded.messages, "the local store must render immediately")
+		}
+	}
+	assert.True(t, foundLocal, "Init must load the local store directly, not only after the sync")
+	assert.Equal(t, 1, syncer.calls, "the background sync must still be kicked off")
+}
 
 func TestComposeKeyEntersComposeState(t *testing.T) {
 	m := testModel()
@@ -679,7 +721,7 @@ func TestHMLJumpWithinVisibleListWindow(t *testing.T) {
 	m.listCursor = 5
 
 	topJump := updateModel(t, m, keyRune('H'))
-	assert.Equal(t, 1, topJump.listCursor)
+	assert.Equal(t, 2, topJump.listCursor)
 
 	middleJump := updateModel(t, m, keyRune('M'))
 	assert.Equal(t, 3, middleJump.listCursor)
@@ -1021,6 +1063,40 @@ func TestDeleteKeyTogglesDeleteAndRefreshesMessages(t *testing.T) {
 	assert.Equal(t, 0, reloaded.listCursor)
 	assert.Equal(t, "Message moved to trash. Press u to undo", updated.statusMessage)
 	assert.False(t, updated.statusError)
+}
+
+// TestDeleteKeyPushesServerTrashMoveInBackground: the delete key must batch a
+// background command that propagates the trash move to the IMAP server, and a
+// failed push must surface in the status bar.
+func TestDeleteKeyPushesServerTrashMoveInBackground(t *testing.T) {
+	service := &messageServiceStub{inbox: sampleMessages()}
+	m := testModelWithService(service)
+	m.state = stateList
+	m.listCursor = 1
+
+	updatedAny, cmd := m.Update(keyRune('d'))
+	updated := updatedAny.(Model)
+	require.NotNil(t, cmd)
+
+	batch, ok := cmd().(tea.BatchMsg)
+	require.True(t, ok, "delete must batch the list refresh with the background server push")
+	pushed := false
+	for _, sub := range batch {
+		if sub == nil {
+			continue
+		}
+		if result, isPush := sub().(trashPushedMsg); isPush {
+			pushed = true
+			require.NoError(t, result.err)
+			assert.Equal(t, "msg-2", result.id)
+		}
+	}
+	require.True(t, pushed, "one batched command must run the server push")
+	assert.Equal(t, []string{"msg-2"}, service.pushTrashCalls)
+
+	failed := updateModel(t, updated, trashPushedMsg{id: "msg-2", err: errors.New("imap down")})
+	assert.True(t, failed.statusError)
+	assert.Contains(t, failed.statusMessage, "server move failed")
 }
 
 func TestDeleteUndoRestoresMessageToMailbox(t *testing.T) {

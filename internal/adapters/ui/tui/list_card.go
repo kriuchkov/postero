@@ -104,6 +104,14 @@ func renderListCard(m Model, msg *models.Message, contentWidth int, cursorMode l
 
 	block := lipgloss.JoinVertical(lipgloss.Left, rows...)
 	rendered := cardStyle.Render(block)
+	// The card separator is a detached faint rule below the card, not a border
+	// side: it stays the same in every cursor state, never touches the left
+	// accent bar (no corner glyph), and is indented past the border column so it
+	// underlines only the content.
+	separator := lipgloss.NewStyle().
+		Foreground(m.styles.Palette.Faint).
+		Render(" " + strings.Repeat("─", max(lipgloss.Width(rendered)-1, 1)))
+	rendered = lipgloss.JoinVertical(lipgloss.Left, rendered, separator)
 	return rendered, lipgloss.Height(rendered)
 }
 

@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -74,6 +76,45 @@ func TestReplyAIPopupEscCancels(t *testing.T) {
 	assert.False(t, m.aiPromptActive)
 	assert.Contains(t, m.statusMessage, "cancelled")
 	assert.Empty(t, assistant.requests, "cancelling must not call the assistant")
+}
+
+// TestReplyAIPopupHasSolidBackground guards the "floating background" bug: on a
+// translucent terminal any cell inside the modal without an explicit background
+// shows the pane underneath. Walk every rendered cell and require an active
+// Surface background — lipgloss's outer Background stops at inner ANSI resets,
+// so this only holds when each row paints itself.
+func TestReplyAIPopupHasSolidBackground(t *testing.T) {
+	forceColorProfile(t)
+	m, _ := aiPopupModel(t)
+	m = updateModel(t, m, keyRune('A'))
+	require.True(t, m.aiPromptActive)
+
+	box := m.renderAIReplyPopup()
+	surfaceBg := "48;5;" + string(m.styles.Palette.Surface)
+
+	for lineNo, line := range strings.Split(box, "\n") {
+		bgActive := false
+		i := 0
+		for i < len(line) {
+			if strings.HasPrefix(line[i:], "\x1b[") {
+				end := strings.Index(line[i:], "m")
+				require.GreaterOrEqual(t, end, 0, "line %d: unterminated ANSI sequence", lineNo)
+				params := line[i+2 : i+end]
+				switch {
+				case strings.Contains(params, surfaceBg):
+					bgActive = true
+				case params == "" || params == "0" || strings.HasPrefix(params, "0;"):
+					bgActive = false
+				}
+				i += end + 1
+				continue
+			}
+			r, size := utf8.DecodeRuneInString(line[i:])
+			assert.True(t, bgActive,
+				"line %d: cell %q at byte %d has no surface background — transparent gap", lineNo, string(r), i)
+			i += size
+		}
+	}
 }
 
 func TestReplyAIPopupRendersOverAndKeepsContext(t *testing.T) {

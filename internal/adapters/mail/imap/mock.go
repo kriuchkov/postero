@@ -34,6 +34,14 @@ func (m *MockRepository) Disconnect(_ context.Context) error {
 	return nil
 }
 
+// MoveToTrash pretends to move a message into the server's trash mailbox.
+func (m *MockRepository) MoveToTrash(_ context.Context, _ string, _ uint32) (string, error) {
+	if !m.connected {
+		return "", ErrNotConnected
+	}
+	return "Trash", nil
+}
+
 // Fetch retrieves mock test messages
 func (m *MockRepository) Fetch(_ context.Context, _ string, limit int) ([]*models.Message, error) {
 	if !m.connected {

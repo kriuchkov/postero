@@ -617,7 +617,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus(fmt.Sprintf("Synced %d messages", msg.count))
 		}
 		m.prepareFreshMessageFetch()
+		// The sync ran in the background, so the user may already be reading the
+		// (locally loaded) list — keep their place through the refresh.
+		if selectedID := m.currentMessageID(); selectedID != "" {
+			return m, m.fetchMessagesForID(selectedID)
+		}
 		return m, m.fetchMessages()
+	case trashPushedMsg:
+		if msg.err != nil {
+			m.setError("Deleted locally, but the server move failed: " + msg.err.Error())
+		}
+		return m, nil
 	case demoSeededMsg:
 		if msg.err != nil {
 			m.setError("Demo setup failed: " + msg.err.Error())
@@ -2290,10 +2300,24 @@ func (m *Model) applyRepeatableAction(action repeatableAction, count int) tea.Cm
 	m.armUndoBatch(snapshots, string(action))
 	m.setStatus(repeatableActionStatus(action, len(snapshots)))
 	m.prepareFreshMessageFetch()
+	var fetch tea.Cmd
 	if selectedID := m.currentMessageID(); selectedID != "" {
-		return m.fetchMessagesForID(selectedID)
+		fetch = m.fetchMessagesForID(selectedID)
+	} else {
+		fetch = m.fetchMessagesAtCursor(m.listCursor)
 	}
-	return m.fetchMessagesAtCursor(m.listCursor)
+	if action != repeatableActionTrash {
+		return fetch
+	}
+	// Trash moves also happen on the IMAP server, but that round-trip runs in
+	// the background so the key press stays instant.
+	cmds := make([]tea.Cmd, 0, len(snapshots)+1)
+	for _, snapshot := range snapshots {
+		if cmd := m.pushTrashMoveCmd(snapshot.ID); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(append(cmds, fetch)...)
 }
 
 func (m *Model) applyRepeatableActionOnce(action repeatableAction) (*models.Message, bool, bool, string) {

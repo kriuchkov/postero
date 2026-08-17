@@ -902,8 +902,8 @@ func TestListWindowRangeUsesMeasuredCardHeights(t *testing.T) {
 	m.state = stateList
 	m.listCursor = 0
 
-	// Cards are 3 rows tall; at this height only three of the four fit the window.
-	start, end := listWindowRange(m, 12)
+	// Cards are 4 rows tall; at this height only three of the four fit the window.
+	start, end := listWindowRange(m, 16)
 
 	assert.Equal(t, 0, start)
 	assert.Equal(t, 3, end)
