@@ -185,14 +185,48 @@ func TestCardShowsAccountTagInMixedList(t *testing.T) {
 func TestCardStripsEmojiVariationSelectors(t *testing.T) {
 	m := testModel()
 	msg := cardMessage()
-	msg.Subject = "Важное \u2764\ufe0f письмо"
+	msg.Subject = "Важное \u2764\ufe0f письмо \U0001F381"
 	msg.From = "Отель \U0001F3D6\ufe0f <hotel@example.com>"
-	msg.Body = "Пляж \U0001F3D6\ufe0f ждёт"
+	msg.Body = "Пляж \U0001F3D6\ufe0f ждёт \u200d\u200b"
 
 	rendered, _ := renderListCard(m, msg, 44, listCursorNone)
 	clean := ansi.Strip(rendered)
 	assert.NotContains(t, clean, "\ufe0f", "variation selectors must be stripped from card text")
-	assert.Contains(t, clean, "\u2764", "the base glyph itself survives")
+	assert.NotContains(t, clean, "\u200d", "zero-width joiners must be stripped from card text")
+	assert.NotContains(t, clean, "\u200b", "zero-width spaces must be stripped from card text")
+	// Narrow-measured pictographs (❤ U+2764, 🏖 U+1F3D6) render two cells on
+	// macOS terminals while measuring one — they must go entirely.
+	assert.NotContains(t, clean, "\u2764", "narrow-measured pictographs must be dropped")
+	assert.NotContains(t, clean, "\U0001F3D6", "narrow-measured pictographs must be dropped")
+	assert.Contains(t, clean, "\U0001F381", "wide-measured emoji are width-stable and survive")
+}
+
+// TestSanitizeWidthTextDropsControlRunes: tabs expand to a tab stop and \r
+// rewinds the cursor — both corrupt the frame no matter what the width math
+// says, so no control rune may survive into rendered text.
+func TestSanitizeWidthTextDropsControlRunes(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "a bc", sanitizeCellText("a\tb\rc"), "tab becomes a space, carriage return is dropped")
+	assert.Equal(t, "one two", sanitizeCellText("one\ntwo"))
+	assert.Equal(t, "line1\nline2 x", sanitizeWidthText("line1\r\nline2\tx", true))
+	assert.Equal(t, "clean", sanitizeWidthText("clean", true))
+}
+
+// TestSanitizeKeepsPredictableSymbols: the width allowlist must not eat glyphs
+// that render exactly one cell everywhere — arrows, box drawing and geometric
+// shapes are common in real subject lines, and the TUI draws its own frame with
+// them.
+func TestSanitizeKeepsPredictableSymbols(t *testing.T) {
+	t.Parallel()
+
+	for _, keep := range []string{"\u2192", "\u2500", "\u258c", "\u25cf", "\u2264", "\u2116", "\u20bd"} {
+		assert.Equal(t, keep, sanitizeCellText(keep), "%q renders one predictable cell and must survive", keep)
+	}
+	for _, drop := range []string{"\u2764", "\U0001F3D6", "\ufe0f", "\u200d"} {
+		assert.Empty(t, sanitizeCellText(drop), "%q has an unpredictable width and must be dropped", drop)
+	}
+	// Wide-measured emoji stay: measured width and rendered width agree.
+	assert.Equal(t, "\U0001F381", sanitizeCellText("\U0001F381"))
 }
 
 func TestMessageStateBadges(t *testing.T) {

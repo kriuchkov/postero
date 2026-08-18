@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kriuchkov/postero/internal/core/models"
 	"github.com/kriuchkov/postero/pkg/htmlmd"
@@ -135,22 +136,115 @@ type cardPieces struct {
 	accountTag string
 }
 
-// sanitizeCellText makes a string width-stable for cell-based layout: emoji
-// variation selectors (U+FE0F/U+FE0E) make many terminals render a glyph one
-// cell wider (or narrower) than lipgloss measures it, so a row that fit on
-// paper wraps in the terminal and shifts the whole frame. Dropping the
-// selectors pins each glyph to its measured width.
+// sanitizeCellText makes a string width-stable for cell-based layout by
+// dropping runes that make the terminal's cell width diverge from the measured
+// width. A row lipgloss measured as exactly fitting then renders one cell
+// wider, wraps in the terminal, and shifts the whole frame — the classic
+// "everything doubles while scrolling" corruption. One mismatched line is
+// enough: the renderer keeps diffing against the wrong screen afterwards.
 func sanitizeCellText(s string) string {
-	const vs16, vs15 = rune(0xFE0F), rune(0xFE0E)
-	if !strings.ContainsRune(s, vs16) && !strings.ContainsRune(s, vs15) {
+	return sanitizeWidthText(s, false)
+}
+
+// sanitizeWidthText is the shared implementation: cells flatten newlines to
+// spaces, the reader body keeps them. Tabs become single spaces (a terminal
+// expands \t to the next tab stop — up to 8 cells — while the width math
+// counts 1), and \r plus all other control characters are dropped outright (a
+// stray carriage return sends the terminal cursor back to column 0 and the
+// rest of the line overwrites the pane next to it).
+func sanitizeWidthText(s string, keepNewlines bool) string {
+	changed := false
+	for _, r := range s {
+		if widthSafeRune(r, keepNewlines) != r {
+			changed = true
+			break
+		}
+	}
+	if !changed {
 		return s
 	}
 	return strings.Map(func(r rune) rune {
-		if r == vs16 || r == vs15 {
-			return -1
-		}
-		return r
+		return widthSafeRune(r, keepNewlines)
 	}, s)
+}
+
+// widthSafeRune maps a rune to its width-stable replacement: itself when it is
+// on the allowlist, a space for separator-like runes, or -1 (drop) otherwise.
+//
+// This is deliberately an ALLOWLIST, not a blocklist: every Unicode release
+// (and every terminal) ships new glyphs whose rendered width disagrees with
+// the measured width — variation selectors, narrow-classified emoji, tabs,
+// stray carriage returns. Enumerating offenders is a losing game; enumerating
+// the scripts and symbols whose cell width is actually predictable is short.
+func widthSafeRune(r rune, keepNewlines bool) rune {
+	switch r {
+	case '\n':
+		if keepNewlines {
+			return '\n'
+		}
+		return ' '
+	case '\t', '\u00A0': // tab and no-break space flatten to a plain space
+		return ' '
+	}
+	if isWidthSafeRune(r) {
+		return r
+	}
+	return -1
+}
+
+// isWidthSafeRune reports whether a rune's terminal cell width is predictable:
+// narrow scripts and punctuation that always render one cell, wide CJK that
+// always renders two, and pictographs only when the width libraries already
+// measure them as two cells (matching how terminals draw them).
+func isWidthSafeRune(r rune) bool {
+	switch {
+	// Narrow, one cell everywhere: ASCII, Latin (incl. extended), Greek,
+	// Cyrillic, Armenian, common punctuation, currency (₽), letterlike (№ ™).
+	case r >= 0x20 && r <= 0x7E,
+		r >= 0xA1 && r <= 0x2AF,
+		r >= 0x370 && r <= 0x58F,
+		r >= 0x1E00 && r <= 0x1FFF,
+		r >= 0x2010 && r <= 0x2027,
+		r >= 0x2030 && r <= 0x205E,
+		r >= 0x20A0 && r <= 0x20CF,
+		r >= 0x2100 && r <= 0x2134:
+		return true
+	// Also narrow and predictable, and common in real subject lines: arrows
+	// (→), math operators (±, ≤), enclosed alphanumerics (①), box drawing and
+	// block elements (─ ▌ — the TUI draws its own frame with these), and
+	// geometric shapes (● ▶).
+	case r >= 0x2190 && r <= 0x22FF,
+		r >= 0x2460 && r <= 0x24FF,
+		r >= 0x2500 && r <= 0x25FF:
+		return true
+	// Wide, two cells everywhere: kana, CJK ideographs, hangul, fullwidth forms.
+	case r >= 0x3040 && r <= 0x30FF,
+		r >= 0x3400 && r <= 0x9FFF,
+		r >= 0xAC00 && r <= 0xD7A3,
+		r >= 0xFF01 && r <= 0xFF60:
+		return true
+	// Pictographs and emoji: only when measured wide — a narrow-measured
+	// pictograph (🏖 U+1F3D6, ❤ U+2764) is drawn two cells by macOS terminals
+	// while the layout math places it as one, shifting the whole frame.
+	case isPictographRune(r):
+		return ansi.StringWidth(string(r)) == 2
+	default:
+		return false
+	}
+}
+
+// isPictographRune reports whether a rune lives in an emoji/pictograph block —
+// the glyphs whose terminal cell width agrees with the measured width least
+// often. This is the single definition of that set: the sanitizer keeps only
+// the ones already measured as two cells, and the width self-check measures the
+// same set pessimistically. Two lists would drift apart.
+func isPictographRune(r rune) bool {
+	return (r >= 0x2300 && r <= 0x23FF) || // misc technical (⌚ ⏱)
+		(r >= 0x2600 && r <= 0x27BF) || // misc symbols and dingbats (☀ ❤ ✈)
+		(r >= 0x2B00 && r <= 0x2BFF) || // misc symbols and arrows (⭐ ⬛)
+		(r >= 0x1F000 && r <= 0x1FAFF) || // emoji blocks (🏖 🎁)
+		r == 0x303D || r == 0x3030 || // 〽 〰, emoji-presented CJK symbols
+		(r >= 0xE000 && r <= 0xF8FF) // private use: width depends on the font
 }
 
 // listCardAccountTag names the card's owning account when the list can mix
@@ -337,6 +431,10 @@ func skipHTMLElement(lower string, i int, closing string) int {
 }
 
 func truncateText(value string, width int) string {
+	// truncateText is the shared chokepoint for every single-line cell (card
+	// rows, reader meta, popup fields) — sanitize here so no width-hazard rune
+	// survives into a measured line.
+	value = sanitizeCellText(value)
 	if width <= 0 {
 		return ""
 	}

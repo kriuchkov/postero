@@ -84,7 +84,10 @@ func styleEmphasis(text string) string {
 // body is wrapped to width (long tokens broken) so nothing runs off the right edge
 // while links stay openable in full.
 func wrapReaderBody(text string, width int, expand bool) string {
-	return wrapToWidth(styleEmphasis(linkifyURLs(text, expand)), width)
+	// Width-hazard runes (variation selectors, ZWJ, tabs, stray \r) must go
+	// before wrapping: a body line the wrapper measured as fitting would
+	// otherwise render wider in the terminal and shift the whole frame.
+	return wrapToWidth(styleEmphasis(linkifyURLs(sanitizeWidthText(text, true), expand)), width)
 }
 
 // wrapToWidth soft-wraps text to width, breaking overly long tokens (e.g. URLs)

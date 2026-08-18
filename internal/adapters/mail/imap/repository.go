@@ -12,6 +12,10 @@ import (
 	"strconv"
 	"strings"
 
+	// Register decoders for legacy charsets (koi8-r, windows-1251, …) so
+	// encoded-word headers and message bodies from Russian senders decode
+	// instead of showing raw "=?koi8-r?B?…?=" text.
+	_ "github.com/emersion/go-message/charset"
 	imail "github.com/emersion/go-message/mail"
 
 	goimap "github.com/emersion/go-imap"
