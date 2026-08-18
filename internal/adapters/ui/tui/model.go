@@ -45,29 +45,32 @@ type Model struct {
 	allMessages      []*models.Message
 	sidebarTagSource []*models.Message
 	messages         []*models.Message
-	listCursor       int
-	fetchOffset      int
-	hasMoreMessages  bool
-	messagesLoading  bool
-	aiGenerating     bool
-	loadingFrame     int
-	loadingToken     int
-	aiLoadingFrame   int
-	aiLoadingToken   int
-	aiLoadingLabel   string
-	activeDraft      *models.Message // For compose/reply
-	accountNames     []string
-	accountEmails    map[string]string
-	defaultFrom      string
-	defaultAcctID    string
-	activeAccountID  string
-	activeTagID      string
-	statusMessage    string
-	statusError      bool
-	composeTitle     string
-	composeHint      string
-	composeEditing   bool
-	composeBaseline  *models.Message
+	// mailboxCounts holds store-side totals so the header and sidebar report
+	// what the mailbox actually contains, not how much of it is paged in.
+	mailboxCounts   mailboxCountsMsg
+	listCursor      int
+	fetchOffset     int
+	hasMoreMessages bool
+	messagesLoading bool
+	aiGenerating    bool
+	loadingFrame    int
+	loadingToken    int
+	aiLoadingFrame  int
+	aiLoadingToken  int
+	aiLoadingLabel  string
+	activeDraft     *models.Message // For compose/reply
+	accountNames    []string
+	accountEmails   map[string]string
+	defaultFrom     string
+	defaultAcctID   string
+	activeAccountID string
+	activeTagID     string
+	statusMessage   string
+	statusError     bool
+	composeTitle    string
+	composeHint     string
+	composeEditing  bool
+	composeBaseline *models.Message
 	// composeDiscardArmed is set after the first esc on an unsaved draft; the
 	// next esc discards it.
 	composeDiscardArmed bool

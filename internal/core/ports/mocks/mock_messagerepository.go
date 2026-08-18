@@ -14,6 +14,30 @@ type MockMessageRepository struct {
 	mock.Mock
 }
 
+// Count provides a mock function with given fields: ctx, criteria
+func (_m *MockMessageRepository) Count(ctx context.Context, criteria models.SearchCriteria) (int, error) {
+	ret := _m.Called(ctx, criteria)
+	if len(ret) == 0 {
+		panic("no return value specified for Count")
+	}
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func(context.Context, models.SearchCriteria) int); ok {
+		r0 = rf(ctx, criteria)
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	var r1 error
+	if rf, ok := ret.Get(1).(func(context.Context, models.SearchCriteria) error); ok {
+		r1 = rf(ctx, criteria)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
 // Delete provides a mock function with given fields: ctx, id
 func (_m *MockMessageRepository) Delete(ctx context.Context, id string) error {
 	ret := _m.Called(ctx, id)

@@ -126,6 +126,18 @@ type demoSeededMsg struct {
 	err   error
 }
 
+// mailboxCountsMsg carries store-side totals: per-folder counts for the
+// sidebar plus the current view's total/unread for the header. scopeKey guards
+// against a late reply landing after the user moved to another mailbox.
+type mailboxCountsMsg struct {
+	scopeKey   string
+	folders    map[string]int
+	total      int
+	unread     int
+	scopeTotal int // mailbox total ignoring the search query ("N of M")
+	valid      bool
+}
+
 // trashPushedMsg reports the background IMAP move of one trashed message.
 type trashPushedMsg struct {
 	id  string
@@ -338,87 +350,25 @@ func (m Model) searchDebounceCmd() tea.Cmd {
 	})
 }
 
-// fetchMessagesSelection keeps sidebar-driven loading in one place so browse state and refresh flow share the same selection rules.
+// fetchMessagesPage keeps sidebar-driven loading in one place so browse state
+// and refresh flow share the same selection rules. Every view — mailbox, tag,
+// search, account scope — resolves through scopeCriteria, the same builder the
+// mailbox counters use.
 func (m Model) fetchMessagesPage(targetCursor int, targetID string, offset int, appendPage bool) tea.Cmd {
 	return func() tea.Msg {
 		if m.service == nil {
 			return nil
 		}
 
-		ctx := context.Background()
-		var msgs []*models.Message
-		var err error
-
-		if m.sidebarCursor >= len(m.sidebarItems) {
+		accountID, selectedItem, activeTagID, searchQuery := m.currentScope()
+		criteria, ok := m.scopeCriteria(accountID, selectedItem, activeTagID, searchQuery)
+		if !ok {
 			return nil
 		}
-		selectedItem := m.sidebarItems[m.sidebarCursor]
-		scopeAccountID := strings.TrimSpace(m.activeAccountID)
-		activeTagID := strings.TrimSpace(m.activeTagID)
-		searchQuery := strings.TrimSpace(m.searchQuery)
-		scopeKey := m.currentMessageScopeKey()
-		if accountID, ok := m.selectedAccountID(); ok {
-			scopeAccountID = accountID
-		}
-		if searchQuery != "" {
-			msgs, err = m.fetchScopedSearch(ctx, scopeAccountID, selectedItem, activeTagID, searchQuery, offset)
-			if err != nil {
-				return nil
-			}
-			return messagesLoadedMsg{
-				messages:        msgs,
-				targetCursor:    targetCursor,
-				targetID:        targetID,
-				activeAccountID: scopeAccountID,
-				activeTagID:     activeTagID,
-				appendPage:      appendPage,
-				hasMore:         len(msgs) == m.listFetchPageSize(),
-				nextOffset:      offset + len(msgs),
-				scopeKey:        scopeKey,
-			}
-		}
-		if activeTagID != "" {
-			msgs, err = m.fetchScopedTag(ctx, scopeAccountID, activeTagID, offset)
-			if err != nil {
-				return nil
-			}
-			return messagesLoadedMsg{
-				messages:        msgs,
-				targetCursor:    targetCursor,
-				targetID:        targetID,
-				activeAccountID: scopeAccountID,
-				activeTagID:     activeTagID,
-				appendPage:      appendPage,
-				hasMore:         len(msgs) == m.listFetchPageSize(),
-				nextOffset:      offset + len(msgs),
-				scopeKey:        scopeKey,
-			}
-		}
+		criteria.Limit = m.listFetchPageSize()
+		criteria.Offset = offset
 
-		switch selectedItem {
-		case "Inbox":
-			msgs, err = m.fetchScopedMailbox(ctx, scopeAccountID, "Inbox", offset)
-		case "Sent":
-			msgs, err = m.fetchScopedMailbox(ctx, scopeAccountID, "Sent", offset)
-		case "Drafts":
-			msgs, err = m.fetchScopedMailbox(ctx, scopeAccountID, "Drafts", offset)
-		case "Archive":
-			msgs, err = m.fetchScopedMailbox(ctx, scopeAccountID, "Archive", offset)
-		case "Trash":
-			msgs, err = m.fetchScopedMailbox(ctx, scopeAccountID, "Trash", offset)
-		case "Spam":
-			msgs, err = m.fetchScopedMailbox(ctx, scopeAccountID, "Spam", offset)
-		default:
-			if selectedItem == "" || selectedItem == "Accounts:" {
-				return nil
-			}
-			if accountID, ok := m.selectedAccountID(); ok {
-				msgs, err = m.fetchScopedMailbox(ctx, accountID, "Inbox", offset)
-			} else {
-				msgs, err = m.service.GetByLabel(ctx, strings.TrimSpace(selectedItem), m.listFetchPageSize(), offset)
-			}
-		}
-
+		msgs, err := m.service.SearchMessages(context.Background(), criteria)
 		if err != nil {
 			return nil
 		}
@@ -427,149 +377,154 @@ func (m Model) fetchMessagesPage(targetCursor int, targetID string, offset int, 
 			messages:        msgs,
 			targetCursor:    targetCursor,
 			targetID:        targetID,
-			activeAccountID: scopeAccountID,
+			activeAccountID: accountID,
 			activeTagID:     activeTagID,
 			appendPage:      appendPage,
 			hasMore:         len(msgs) == m.listFetchPageSize(),
 			nextOffset:      offset + len(msgs),
-			scopeKey:        scopeKey,
+			scopeKey:        m.currentMessageScopeKey(),
 		}
 	}
 }
 
-func (m Model) fetchScopedSearch(ctx context.Context, accountID, selectedItem, activeTagID, query string, offset int) ([]*models.Message, error) {
-	criteria := models.SearchCriteria{Query: query, Limit: m.listFetchPageSize(), Offset: offset}
+// scopeCriteria maps the whole current view — mailbox or tag, account scope and
+// search query — onto one unpaginated criteria. Both the list fetch and the
+// mailbox counters go through it.
+func (m Model) scopeCriteria(accountID, selectedItem, tagID, query string) (models.SearchCriteria, bool) {
 	accountID = strings.TrimSpace(accountID)
 	selectedItem = strings.TrimSpace(selectedItem)
-	activeTagID = strings.TrimSpace(activeTagID)
-	if activeTagID != "" {
-		criteria.AccountID = accountID
-		criteria.Labels = []string{activeTagID}
-		isDeleted := false
-		criteria.IsDeleted = &isDeleted
-		return m.service.SearchMessages(ctx, criteria)
+	query = strings.TrimSpace(query)
+
+	if criteria, ok := tagCriteria(accountID, tagID); ok {
+		criteria.Query = query
+		return criteria, true
 	}
-	if strings.HasPrefix(selectedItem, "Accounts:") || selectedItem == "" {
-		return nil, nil
+	if selectedItem == "" || strings.HasPrefix(selectedItem, "Accounts:") {
+		return models.SearchCriteria{}, false
 	}
-	if strings.HasPrefix(m.sidebarItems[m.sidebarCursor], "  ") {
+	// An account row in the sidebar scopes the inbox to that account.
+	if m.sidebarCursor >= 0 && m.sidebarCursor < len(m.sidebarItems) &&
+		strings.HasPrefix(m.sidebarItems[m.sidebarCursor], "  ") {
 		selectedItem = "Inbox"
 	}
-	if accountID != "" {
-		criteria.AccountID = accountID
-	}
 
-	switch selectedItem {
-	case "Inbox":
-		isDraft := false
-		isSpam := false
-		isDeleted := false
-		criteria.IsDraft = &isDraft
-		criteria.IsSpam = &isSpam
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = []string{"inbox"}
-	case "Sent":
-		isDeleted := false
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = []string{"sent"}
-	case "Drafts":
-		isDraft := true
-		isDeleted := false
-		criteria.IsDraft = &isDraft
-		criteria.IsDeleted = &isDeleted
-	case "Archive":
-		isDeleted := false
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = []string{"archive"}
-	case "Trash":
-		isDeleted := true
-		criteria.IsDeleted = &isDeleted
-	case "Spam":
-		isDeleted := false
-		isSpam := true
-		criteria.IsDeleted = &isDeleted
-		criteria.IsSpam = &isSpam
-	default:
-		isDeleted := false
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = []string{selectedItem}
-	}
-
-	return m.service.SearchMessages(ctx, criteria)
-}
-
-func (m Model) fetchScopedTag(ctx context.Context, accountID, tag string, offset int) ([]*models.Message, error) {
-	accountID = strings.TrimSpace(accountID)
-	tag = strings.TrimSpace(tag)
-	if tag == "" {
-		return nil, nil
-	}
-	if accountID == "" {
-		return m.service.GetByLabel(ctx, tag, m.listFetchPageSize(), offset)
-	}
-
-	isDeleted := false
-	return m.service.SearchMessages(ctx, models.SearchCriteria{
-		AccountID: accountID,
-		Labels:    []string{tag},
-		IsDeleted: &isDeleted,
-		Limit:     m.listFetchPageSize(),
-		Offset:    offset,
-	})
-}
-
-func (m Model) fetchScopedMailbox(ctx context.Context, accountID, mailbox string, offset int) ([]*models.Message, error) {
-	accountID = strings.TrimSpace(accountID)
-	if accountID == "" {
-		switch mailbox {
-		case "Inbox":
-			return m.service.GetAllInboxes(ctx, m.listFetchPageSize(), offset)
-		case "Sent":
-			return m.service.GetSent(ctx, m.listFetchPageSize(), offset)
-		case "Drafts":
-			return m.service.GetDrafts(ctx, m.listFetchPageSize(), offset)
-		case "Archive":
-			return m.service.GetByLabel(ctx, "archive", m.listFetchPageSize(), offset)
-		case "Trash":
-			isDeleted := true
-			return m.service.SearchMessages(ctx, models.SearchCriteria{IsDeleted: &isDeleted, Limit: m.listFetchPageSize(), Offset: offset})
-		case "Spam":
-			isSpam := true
-			isDeleted := false
-			return m.service.SearchMessages(ctx, models.SearchCriteria{IsSpam: &isSpam, IsDeleted: &isDeleted, Limit: m.listFetchPageSize(), Offset: offset})
-		default:
-			return nil, nil
+	criteria, ok := mailboxCriteria(accountID, selectedItem)
+	if !ok {
+		// A custom sidebar row (a tag section entry) filters by that label.
+		notDeleted := false
+		criteria = models.SearchCriteria{
+			AccountID: accountID,
+			Labels:    []string{selectedItem},
+			IsDeleted: &notDeleted,
 		}
 	}
-
-	isDeleted := false
-	criteria := models.SearchCriteria{AccountID: accountID, IsDeleted: &isDeleted, Limit: m.listFetchPageSize(), Offset: offset}
-	switch mailbox {
-	case "Inbox":
-		isDraft := false
-		isSpam := false
-		criteria.IsDraft = &isDraft
-		criteria.IsSpam = &isSpam
-		criteria.Labels = []string{"inbox"}
-	case "Sent":
-		criteria.Labels = []string{"sent"}
-	case "Drafts":
-		isDraft := true
-		criteria.IsDraft = &isDraft
-	case "Archive":
-		criteria.Labels = []string{"archive"}
-	case "Trash":
-		isDeleted = true
-		criteria.IsDeleted = &isDeleted
-	case "Spam":
-		isSpam := true
-		criteria.IsSpam = &isSpam
-	default:
-		return nil, nil
-	}
-
-	return m.service.SearchMessages(ctx, criteria)
+	criteria.Query = query
+	return criteria, true
 }
+
+// currentScope resolves the view the user is looking at right now: the account
+// scope (sidebar selection wins over the pinned scope), the selected sidebar
+// row, the active tag, and the search query.
+func (m Model) currentScope() (string, string, string, string) {
+	selectedItem := ""
+	if m.sidebarCursor >= 0 && m.sidebarCursor < len(m.sidebarItems) {
+		selectedItem = m.sidebarItems[m.sidebarCursor]
+	}
+	accountID := strings.TrimSpace(m.activeAccountID)
+	if selected, ok := m.selectedAccountID(); ok {
+		accountID = selected
+	}
+	return accountID, selectedItem, strings.TrimSpace(m.activeTagID), strings.TrimSpace(m.searchQuery)
+}
+
+// fetchMailboxCountsCmd loads the true mailbox totals from the store. The list
+// itself is paged, so counting loaded messages would report "30 messages" for a
+// 46-message inbox and silently change to 46 once scrolling pulled the next
+// page in — these counts come from the store and never depend on paging.
+func (m Model) fetchMailboxCountsCmd() tea.Cmd {
+	service := m.service
+	if service == nil {
+		return nil
+	}
+	accountID, selectedItem, tagID, query := m.currentScope()
+	scopeKey := m.currentMessageScopeKey()
+
+	return func() tea.Msg {
+		ctx := context.Background()
+		counts := mailboxCountsMsg{scopeKey: scopeKey, folders: make(map[string]int, len(sidebarMailboxes))}
+
+		for _, mailbox := range sidebarMailboxes {
+			criteria, ok := mailboxCriteria(accountID, mailbox)
+			if !ok {
+				continue
+			}
+			total, err := service.CountMessages(ctx, criteria)
+			if err != nil {
+				return nil
+			}
+			counts.folders[mailbox] = total
+		}
+
+		criteria, ok := m.scopeCriteria(accountID, selectedItem, tagID, query)
+		if !ok {
+			return counts
+		}
+		total, err := service.CountMessages(ctx, criteria)
+		if err != nil {
+			return nil
+		}
+		counts.total = total
+
+		unreadCriteria := criteria
+		notRead := false
+		unreadCriteria.IsRead = &notRead
+		if unread, err := service.CountMessages(ctx, unreadCriteria); err == nil {
+			counts.unread = unread
+		}
+
+		// With a search active the header reads "N of M": M is the mailbox
+		// total the query filters down, so count it without the query.
+		if query != "" {
+			unfiltered := criteria
+			unfiltered.Query = ""
+			if scopeTotal, err := service.CountMessages(ctx, unfiltered); err == nil {
+				counts.scopeTotal = scopeTotal
+			}
+		}
+		counts.valid = true
+		return counts
+	}
+}
+
+// mailboxCriteria maps a sidebar row onto the domain's mailbox definition. The
+// TUI only knows the row's display name; what belongs in that mailbox is the
+// domain's business, shared with the CLI, the counters and the storage query.
+func mailboxCriteria(accountID, mailbox string) (models.SearchCriteria, bool) {
+	box, ok := models.ParseMailbox(mailbox)
+	if !ok || box == models.MailboxAll || box == models.MailboxFlagged {
+		// The sidebar has no All/Flagged rows; treat them as unknown here so a
+		// tag row named "all" keeps falling through to the label filter.
+		return models.SearchCriteria{}, false
+	}
+	return box.Criteria(accountID), true
+}
+
+// tagCriteria describes a sidebar tag selection as an unpaginated criteria.
+func tagCriteria(accountID, tag string) (models.SearchCriteria, bool) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return models.SearchCriteria{}, false
+	}
+	notDeleted := false
+	return models.SearchCriteria{
+		AccountID: strings.TrimSpace(accountID),
+		Labels:    []string{tag},
+		IsDeleted: &notDeleted,
+	}, true
+}
+
+// sidebarMailboxes are the folder rows whose totals the sidebar reports.
+var sidebarMailboxes = []string{"Inbox", "Sent", "Drafts", "Archive", "Trash", "Spam"}
 
 func (m Model) currentMessageScopeKey() string {
 	selectedItem := ""

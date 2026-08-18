@@ -22,50 +22,20 @@ func resolveAccountID(cfg *config.Config, selector string) (string, error) {
 }
 
 func buildListCriteria(mailbox string, labels []string, accountID string, limit, offset int) (models.SearchCriteria, error) {
-	criteria := models.SearchCriteria{
-		AccountID: accountID,
-		Labels:    append([]string{}, labels...),
-		Limit:     limit,
-		Offset:    offset,
+	name := strings.TrimSpace(mailbox)
+	if name == "" {
+		name = string(models.MailboxInbox)
 	}
-
-	switch strings.TrimSpace(strings.ToLower(mailbox)) {
-	case "", "inbox":
-		isDraft := false
-		isSpam := false
-		isDeleted := false
-		criteria.IsDraft = &isDraft
-		criteria.IsSpam = &isSpam
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = append(criteria.Labels, "inbox")
-	case "all":
-	case "archive":
-		isDeleted := false
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = append(criteria.Labels, "archive")
-	case "draft", "drafts":
-		isDraft := true
-		isDeleted := false
-		criteria.IsDraft = &isDraft
-		criteria.IsDeleted = &isDeleted
-	case "sent":
-		isDeleted := false
-		criteria.IsDeleted = &isDeleted
-		criteria.Labels = append(criteria.Labels, "sent")
-	case "spam":
-		isSpam := true
-		criteria.IsSpam = &isSpam
-	case "trash":
-		isDeleted := true
-		criteria.IsDeleted = &isDeleted
-	case "flagged", "starred":
-		isStarred := true
-		isDeleted := false
-		criteria.IsStarred = &isStarred
-		criteria.IsDeleted = &isDeleted
-	default:
+	// Mailbox membership is defined in the domain; the CLI only picks a mailbox
+	// and adds its own label filters and pagination on top.
+	box, ok := models.ParseMailbox(name)
+	if !ok {
 		return models.SearchCriteria{}, errors.Errorf("unsupported mailbox %q", mailbox)
 	}
 
+	criteria := box.Criteria(accountID)
+	criteria.Labels = append(criteria.Labels, labels...)
+	criteria.Limit = limit
+	criteria.Offset = offset
 	return criteria, nil
 }

@@ -45,6 +45,11 @@ type MessageRepository interface {
 	// Search searches messages based on criteria
 	Search(ctx context.Context, criteria models.SearchCriteria) ([]*models.Message, error)
 
+	// Count returns how many messages match the criteria, ignoring its Limit
+	// and Offset. Callers use it to report mailbox totals without paging the
+	// whole mailbox into memory.
+	Count(ctx context.Context, criteria models.SearchCriteria) (int, error)
+
 	// Save persists a message
 	Save(ctx context.Context, message *models.Message) error
 
@@ -69,6 +74,10 @@ type MessageService interface {
 	// SearchMessages searches for messages
 	SearchMessages(ctx context.Context, criteria models.SearchCriteria) ([]*models.Message, error)
 
+	// CountMessages returns how many messages match the criteria, ignoring
+	// pagination — the honest mailbox total behind a paged list.
+	CountMessages(ctx context.Context, criteria models.SearchCriteria) (int, error)
+
 	// ComposeMessage creates a new message draft
 	ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.Message, error)
 
@@ -83,13 +92,6 @@ type MessageService interface {
 
 	// ForwardMessage forwards a message
 	ForwardMessage(ctx context.Context, messageID string, to []string) (*models.Message, error)
-
-	// New required methods
-	GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.Message, error)
-	GetFlagged(ctx context.Context, limit, offset int) ([]*models.Message, error)
-	GetDrafts(ctx context.Context, limit, offset int) ([]*models.Message, error)
-	GetSent(ctx context.Context, limit, offset int) ([]*models.Message, error)
-	GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.Message, error)
 
 	ReplyAllToMessage(ctx context.Context, originalID string, body string) (*models.Message, error)
 	UpdateDraft(ctx context.Context, id string, request *models.UpdateMessageRequest) (*models.Message, error)

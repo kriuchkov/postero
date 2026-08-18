@@ -405,6 +405,9 @@ func activeAccountScopeLabel(m Model) string {
 }
 
 func mailboxSubtitle(m Model) string {
+	// Prefer the store-side totals: the list is paged, so counting loaded
+	// messages would report the page size as the mailbox size and then change
+	// under the user as scrolling pulls the next page in.
 	messageCount := len(m.messages)
 	totalCount := len(m.allMessages)
 	unreadCount := 0
@@ -413,6 +416,12 @@ func mailboxSubtitle(m Model) string {
 			unreadCount++
 		}
 	}
+	if m.mailboxCounts.valid {
+		messageCount = m.mailboxCounts.total
+		unreadCount = m.mailboxCounts.unread
+		totalCount = m.mailboxCounts.scopeTotal
+	}
+
 	if strings.TrimSpace(m.searchQuery) != "" {
 		if unreadCount == 0 {
 			return fmt.Sprintf("%d of %d messages", messageCount, totalCount)

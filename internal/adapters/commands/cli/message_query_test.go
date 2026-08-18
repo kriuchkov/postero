@@ -52,6 +52,19 @@ func TestBuildListCriteriaFlaggedMailbox(t *testing.T) {
 	assert.Equal(t, []string{"work"}, criteria.Labels)
 }
 
+// TestBuildListCriteriaSpamExcludesDeleted: deleted spam belongs to Trash, so
+// `pstr list --mailbox spam` must agree with the TUI's Spam mailbox instead of
+// listing messages the user already trashed.
+func TestBuildListCriteriaSpamExcludesDeleted(t *testing.T) {
+	criteria, err := buildListCriteria("spam", nil, "", 25, 0)
+
+	require.NoError(t, err)
+	require.NotNil(t, criteria.IsSpam)
+	assert.True(t, *criteria.IsSpam)
+	require.NotNil(t, criteria.IsDeleted, "spam listings must exclude trashed messages")
+	assert.False(t, *criteria.IsDeleted)
+}
+
 func TestBuildListCriteriaTrashMailbox(t *testing.T) {
 	criteria, err := buildListCriteria("trash", nil, "", 5, 0)
 

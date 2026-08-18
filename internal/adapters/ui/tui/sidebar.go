@@ -132,7 +132,7 @@ func sidebarTags(m Model) []sidebarSectionRow {
 			continue
 		}
 		for _, label := range msg.Labels {
-			if sidebarSystemLabel(label) {
+			if models.IsSystemMailboxLabel(label) {
 				continue
 			}
 			tagCounts[label]++
@@ -178,6 +178,12 @@ func findSidebarTagByHotkey(m Model, key rune) (string, bool) {
 }
 
 func sidebarMailboxCount(m Model, mailbox string) int {
+	// Store-side totals when we have them: counting loaded messages reports
+	// only what the paged list has fetched so far, and counts every account
+	// even when the sidebar is scoped to one.
+	if count, ok := m.mailboxCounts.folders[mailbox]; ok {
+		return count
+	}
 	count := 0
 	for _, msg := range m.allMessages {
 		if msg == nil {
@@ -204,41 +210,15 @@ func sidebarItemStyle(m Model, selected, muted bool) lipgloss.Style {
 	return style
 }
 
+// sidebarMessageInMailbox reports whether a loaded message counts towards a
+// sidebar row. It is the fallback used until the store-side counts arrive, so
+// it asks the domain the same question the counting query asks.
 func sidebarMessageInMailbox(msg *models.Message, mailbox string) bool {
-	switch mailbox {
-	case "Inbox":
-		return sidebarHasLabel(msg.Labels, "inbox") && !msg.IsDeleted && !msg.IsSpam && !msg.IsDraft
-	case "Sent":
-		return sidebarHasLabel(msg.Labels, "sent") && !msg.IsDeleted
-	case "Drafts":
-		return msg.IsDraft && !msg.IsDeleted
-	case "Archive":
-		return sidebarHasLabel(msg.Labels, "archive") && !msg.IsDeleted
-	case "Trash":
-		return msg.IsDeleted
-	case "Spam":
-		return msg.IsSpam
-	default:
+	box, ok := models.ParseMailbox(mailbox)
+	if !ok {
 		return false
 	}
-}
-
-func sidebarHasLabel(labels []string, target string) bool {
-	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), target) {
-			return true
-		}
-	}
-	return false
-}
-
-func sidebarSystemLabel(label string) bool {
-	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "inbox", "sent", "archive", "trash", "spam", "draft", "drafts":
-		return true
-	default:
-		return false
-	}
+	return box.Contains(msg)
 }
 
 func sidebarTagHotkey(label string, assigned map[rune]struct{}) rune {

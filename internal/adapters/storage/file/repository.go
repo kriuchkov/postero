@@ -71,12 +71,28 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 
 	filtered := make([]*models.Message, 0, len(messages))
 	for _, message := range messages {
-		if matchesCriteria(message, criteria) {
+		if models.MatchesCriteria(message, criteria) {
 			filtered = append(filtered, message)
 		}
 	}
 
 	return paginateMessages(filtered, criteria.Limit, criteria.Offset), nil
+}
+
+// Count reports how many messages match the criteria, ignoring Limit/Offset.
+func (r *Repository) Count(ctx context.Context, criteria models.SearchCriteria) (int, error) {
+	messages, err := r.loadAllMessages(ctx)
+	if err != nil {
+		return 0, err
+	}
+
+	count := 0
+	for _, message := range messages {
+		if models.MatchesCriteria(message, criteria) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (r *Repository) Save(ctx context.Context, message *models.Message) error {
@@ -211,84 +227,4 @@ func paginateMessages(messages []*models.Message, limit, offset int) []*models.M
 		end = offset + limit
 	}
 	return append([]*models.Message{}, messages[offset:end]...)
-}
-
-func matchesCriteria(message *models.Message, criteria models.SearchCriteria) bool {
-	if message == nil {
-		return false
-	}
-	if criteria.Query != "" && !matchesFreeTextQuery(message, criteria.Query) {
-		return false
-	}
-	if criteria.Subject != "" && !containsFold(message.Subject, criteria.Subject) {
-		return false
-	}
-	if criteria.From != "" && !containsFold(message.From, criteria.From) {
-		return false
-	}
-	if criteria.To != "" && !containsFold(strings.Join(message.To, ","), criteria.To) {
-		return false
-	}
-	if criteria.Body != "" && !containsFold(message.Body, criteria.Body) {
-		return false
-	}
-	if criteria.Since != nil && message.Date.Before(*criteria.Since) {
-		return false
-	}
-	if criteria.Before != nil && message.Date.After(*criteria.Before) {
-		return false
-	}
-	if criteria.IsRead != nil && message.IsRead != *criteria.IsRead {
-		return false
-	}
-	if criteria.IsSpam != nil && message.IsSpam != *criteria.IsSpam {
-		return false
-	}
-	if criteria.IsDraft != nil && message.IsDraft != *criteria.IsDraft {
-		return false
-	}
-	if criteria.IsStarred != nil && message.IsStarred != *criteria.IsStarred {
-		return false
-	}
-	if criteria.IsDeleted != nil && message.IsDeleted != *criteria.IsDeleted {
-		return false
-	}
-	if criteria.AccountID != "" && !strings.EqualFold(message.AccountID, criteria.AccountID) {
-		return false
-	}
-	for _, label := range criteria.Labels {
-		if !hasLabel(message.Labels, label) {
-			return false
-		}
-	}
-	return true
-}
-
-func matchesFreeTextQuery(message *models.Message, query string) bool {
-	fields := []string{
-		message.Subject,
-		message.From,
-		strings.Join(message.To, " "),
-		strings.Join(message.Cc, " "),
-		message.Body,
-	}
-	for _, field := range fields {
-		if containsFold(field, query) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsFold(value, query string) bool {
-	return strings.Contains(strings.ToLower(value), strings.ToLower(query))
-}
-
-func hasLabel(labels []string, expected string) bool {
-	for _, label := range labels {
-		if strings.EqualFold(strings.TrimSpace(label), strings.TrimSpace(expected)) {
-			return true
-		}
-	}
-	return false
 }

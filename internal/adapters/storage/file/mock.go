@@ -215,6 +215,15 @@ func (m *MockRepository) Search(_ context.Context, criteria models.SearchCriteri
 	return results, nil
 }
 
+// Count reports how many messages match the criteria, ignoring pagination.
+func (m *MockRepository) Count(ctx context.Context, criteria models.SearchCriteria) (int, error) {
+	results, err := m.Search(ctx, criteria)
+	if err != nil {
+		return 0, err
+	}
+	return len(results), nil
+}
+
 // contains checks if haystack contains needle (case-sensitive substring search)
 func contains(haystack, needle string) bool {
 	return len(needle) == 0 || (len(haystack) > 0 && len(needle) <= len(haystack) &&

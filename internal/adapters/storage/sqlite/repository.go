@@ -158,6 +158,97 @@ func (r *Repository) List(ctx context.Context, limit, offset int) ([]*models.Mes
 	return messages, nil
 }
 
+// searchFilter renders the WHERE fragment (and its bound arguments) for a
+// criteria. Search and Count share it so a mailbox's list and its reported
+// total can never drift apart.
+func searchFilter(criteria models.SearchCriteria) (string, []any) {
+	var (
+		filter strings.Builder
+		args   []any
+	)
+
+	if criteria.Query != "" {
+		filter.WriteString(" AND (subject LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ? OR body LIKE ?)")
+		for range 4 {
+			args = append(args, "%"+criteria.Query+"%")
+		}
+	}
+
+	if criteria.Subject != "" {
+		filter.WriteString(" AND subject LIKE ?")
+		args = append(args, "%"+criteria.Subject+"%")
+	}
+	if criteria.From != "" {
+		filter.WriteString(" AND from_addr LIKE ?")
+		args = append(args, "%"+criteria.From+"%")
+	}
+	if criteria.To != "" {
+		filter.WriteString(" AND to_addrs LIKE ?")
+		args = append(args, "%"+criteria.To+"%")
+	}
+	if criteria.Body != "" {
+		filter.WriteString(" AND body LIKE ?")
+		args = append(args, "%"+criteria.Body+"%")
+	}
+	if criteria.Since != nil {
+		filter.WriteString(" AND date >= ?")
+		args = append(args, *criteria.Since)
+	}
+	if criteria.Before != nil {
+		filter.WriteString(" AND date <= ?")
+		args = append(args, *criteria.Before)
+	}
+
+	if criteria.IsDraft != nil {
+		filter.WriteString(" AND is_draft = ?")
+		args = append(args, *criteria.IsDraft)
+	}
+	if criteria.IsStarred != nil {
+		filter.WriteString(" AND is_starred = ?")
+		args = append(args, *criteria.IsStarred)
+	}
+	if criteria.IsRead != nil {
+		filter.WriteString(" AND is_read = ?")
+		args = append(args, *criteria.IsRead)
+	}
+	if criteria.IsSpam != nil {
+		filter.WriteString(" AND is_spam = ?")
+		args = append(args, *criteria.IsSpam)
+	}
+	// logical deletion (flag)
+	if criteria.IsDeleted != nil {
+		filter.WriteString(" AND flags_deleted = ?")
+		args = append(args, *criteria.IsDeleted)
+	}
+	if criteria.AccountID != "" {
+		filter.WriteString(" AND account_id = ?")
+		args = append(args, criteria.AccountID)
+	}
+
+	// Handle Labels (Naive JSON string match for now)
+	// Stored as ["label1","label2"].
+	for _, label := range criteria.Labels {
+		filter.WriteString(" AND labels LIKE ?")
+		args = append(args, "%\""+label+"\"%")
+	}
+
+	return filter.String(), args
+}
+
+// Count reports how many messages match the criteria, ignoring Limit/Offset.
+func (r *Repository) Count(ctx context.Context, criteria models.SearchCriteria) (int, error) {
+	filter, args := searchFilter(criteria)
+	// Only constant fragments with ? placeholders are concatenated here; every
+	// value is bound via args, so there is no SQL injection surface.
+	query := "SELECT COUNT(*) FROM messages WHERE 1=1" + filter
+
+	var count int
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, errors.Wrap(err, "count messages")
+	}
+	return count, nil
+}
+
 func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria) ([]*models.Message, error) {
 	// Attachment blobs are intentionally excluded from search results; use
 	// GetByID to load a full message.
@@ -168,76 +259,10 @@ func (r *Repository) Search(ctx context.Context, criteria models.SearchCriteria)
 		FROM messages
 		WHERE 1=1
 	`
-	var args []any
-
-	if criteria.Query != "" {
-		query += " AND (subject LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ? OR body LIKE ?)"
-		for range 4 {
-			args = append(args, "%"+criteria.Query+"%")
-		}
-	}
-
-	if criteria.Subject != "" {
-		query += " AND subject LIKE ?"
-		args = append(args, "%"+criteria.Subject+"%")
-	}
-	if criteria.From != "" {
-		query += " AND from_addr LIKE ?"
-		args = append(args, "%"+criteria.From+"%")
-	}
-	if criteria.To != "" {
-		query += " AND to_addrs LIKE ?"
-		args = append(args, "%"+criteria.To+"%")
-	}
-	if criteria.Body != "" {
-		query += " AND body LIKE ?"
-		args = append(args, "%"+criteria.Body+"%")
-	}
-	if criteria.Since != nil {
-		query += " AND date >= ?"
-		args = append(args, *criteria.Since)
-	}
-	if criteria.Before != nil {
-		query += " AND date <= ?"
-		args = append(args, *criteria.Before)
-	}
-
-	if criteria.IsDraft != nil {
-		query += " AND is_draft = ?"
-		args = append(args, *criteria.IsDraft)
-	}
-	if criteria.IsStarred != nil {
-		query += " AND is_starred = ?"
-		args = append(args, *criteria.IsStarred)
-	}
-	if criteria.IsRead != nil {
-		query += " AND is_read = ?"
-		args = append(args, *criteria.IsRead)
-	}
-	if criteria.IsSpam != nil {
-		query += " AND is_spam = ?"
-		args = append(args, *criteria.IsSpam)
-	}
-	// logical deletion (flag)
-	if criteria.IsDeleted != nil {
-		query += " AND flags_deleted = ?"
-		args = append(args, *criteria.IsDeleted)
-	}
-	if criteria.AccountID != "" {
-		query += " AND account_id = ?"
-		args = append(args, criteria.AccountID)
-	}
-
-	// Handle Labels (Naive JSON string match for now)
-	// Stored as ["label1","label2"].
-	var querySb303 strings.Builder
-	for _, label := range criteria.Labels {
-		querySb303.WriteString(" AND labels LIKE ?")
-		args = append(args, "%\""+label+"\"%")
-	}
-	// Only constant fragments with ? placeholders are concatenated here; the label
+	filter, args := searchFilter(criteria)
+	// Only constant fragments with ? placeholders are concatenated here; the
 	// values are bound via args, so there is no SQL injection surface.
-	query += querySb303.String() //nolint:gosec // G202: parameterized, constant fragments only
+	query += filter //nolint:gosec // G202: parameterized, constant fragments only
 
 	query += " ORDER BY date DESC"
 

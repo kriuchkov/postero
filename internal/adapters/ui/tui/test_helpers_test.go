@@ -38,7 +38,6 @@ type messageServiceStub struct {
 	toggleDeleteCalls []string
 	pushTrashCalls    []string
 	toggleDeleteErr   error
-	lastLabelQuery    string
 	lastSearch        models.SearchCriteria
 	composedDraftID   string
 	updatedDraftCall  *models.UpdateMessageRequest
@@ -84,6 +83,15 @@ func (s *messageServiceStub) SearchMessages(_ context.Context, criteria models.S
 	return s.filterMessages(criteria), nil
 }
 
+// CountMessages mirrors SearchMessages so the stub reports the same totals
+// the list would show.
+func (s *messageServiceStub) CountMessages(_ context.Context, criteria models.SearchCriteria) (int, error) {
+	unpaged := criteria
+	unpaged.Limit = 0
+	unpaged.Offset = 0
+	return len(s.filterMessages(unpaged)), nil
+}
+
 func (s *messageServiceStub) ComposeMessage(_ context.Context, createDTO *models.CreateMessageRequest) (*models.Message, error) {
 	if s.composeErr != nil {
 		return nil, s.composeErr
@@ -124,43 +132,6 @@ func (s *messageServiceStub) ReplyToMessage(_ context.Context, _ string, _ strin
 
 func (s *messageServiceStub) ForwardMessage(_ context.Context, _ string, _ []string) (*models.Message, error) {
 	return &models.Message{}, nil
-}
-
-func (s *messageServiceStub) GetAllInboxes(_ context.Context, limit, offset int) ([]*models.Message, error) {
-	isDraft := false
-	isSpam := false
-	isDeleted := false
-	return s.filterMessages(
-		models.SearchCriteria{
-			IsDraft:   &isDraft,
-			IsSpam:    &isSpam,
-			IsDeleted: &isDeleted,
-			Labels:    []string{"inbox"},
-			Limit:     limit,
-			Offset:    offset,
-		},
-	), nil
-}
-
-func (s *messageServiceStub) GetFlagged(_ context.Context, limit, offset int) ([]*models.Message, error) {
-	return s.filterMessages(models.SearchCriteria{Limit: limit, Offset: offset}), nil
-}
-
-func (s *messageServiceStub) GetDrafts(_ context.Context, limit, offset int) ([]*models.Message, error) {
-	isDraft := true
-	isDeleted := false
-	return s.filterMessages(models.SearchCriteria{IsDraft: &isDraft, IsDeleted: &isDeleted, Limit: limit, Offset: offset}), nil
-}
-
-func (s *messageServiceStub) GetSent(_ context.Context, limit, offset int) ([]*models.Message, error) {
-	isDeleted := false
-	return s.filterMessages(models.SearchCriteria{Labels: []string{"sent"}, IsDeleted: &isDeleted, Limit: limit, Offset: offset}), nil
-}
-
-func (s *messageServiceStub) GetByLabel(_ context.Context, label string, limit, offset int) ([]*models.Message, error) {
-	s.lastLabelQuery = label
-	isDeleted := false
-	return s.filterMessages(models.SearchCriteria{Labels: []string{label}, IsDeleted: &isDeleted, Limit: limit, Offset: offset}), nil
 }
 
 func (s *messageServiceStub) ReplyAllToMessage(_ context.Context, _ string, _ string) (*models.Message, error) {

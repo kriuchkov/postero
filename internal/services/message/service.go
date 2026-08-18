@@ -69,6 +69,12 @@ func (s *Service) SearchMessages(ctx context.Context, criteria models.SearchCrit
 	return result, nil
 }
 
+// CountMessages returns how many messages match the criteria, ignoring
+// pagination — the honest total behind a paged list.
+func (s *Service) CountMessages(ctx context.Context, criteria models.SearchCriteria) (int, error) {
+	return s.repository.Count(ctx, criteria)
+}
+
 func (s *Service) ComposeMessage(ctx context.Context, request *models.CreateMessageRequest) (*models.Message, error) {
 	msg := &models.Message{
 		AccountID:   request.AccountID,
@@ -185,65 +191,6 @@ func (s *Service) ForwardMessage(ctx context.Context, messageID string, to []str
 		return nil, err
 	}
 	return cloneMessage(forward), nil
-}
-
-// GetAllInboxes retrieves inbox messages.
-func (s *Service) GetAllInboxes(ctx context.Context, limit, offset int) ([]*models.Message, error) {
-	isDraft := false
-	isSpam := false
-	isDeleted := false
-	return s.SearchMessages(ctx, models.SearchCriteria{
-		IsDraft:   &isDraft,
-		IsSpam:    &isSpam,
-		IsDeleted: &isDeleted,
-		Labels:    []string{"inbox"},
-		Limit:     limit,
-		Offset:    offset,
-	})
-}
-
-// GetFlagged retrieves starred messages.
-func (s *Service) GetFlagged(ctx context.Context, limit, offset int) ([]*models.Message, error) {
-	isStarred := true
-	return s.SearchMessages(ctx, models.SearchCriteria{
-		IsStarred: &isStarred,
-		Limit:     limit,
-		Offset:    offset,
-	})
-}
-
-// GetDrafts retrieves draft messages.
-func (s *Service) GetDrafts(ctx context.Context, limit, offset int) ([]*models.Message, error) {
-	isDraft := true
-	isDeleted := false
-	return s.SearchMessages(ctx, models.SearchCriteria{
-		IsDraft:   &isDraft,
-		IsDeleted: &isDeleted,
-		Limit:     limit,
-		Offset:    offset,
-	})
-}
-
-// GetSent retrieves sent messages.
-func (s *Service) GetSent(ctx context.Context, limit, offset int) ([]*models.Message, error) {
-	isDeleted := false
-	return s.SearchMessages(ctx, models.SearchCriteria{
-		Labels:    []string{"sent"},
-		IsDeleted: &isDeleted,
-		Limit:     limit,
-		Offset:    offset,
-	})
-}
-
-// GetByLabel retrieves messages by label.
-func (s *Service) GetByLabel(ctx context.Context, label string, limit, offset int) ([]*models.Message, error) {
-	isDeleted := false
-	return s.SearchMessages(ctx, models.SearchCriteria{
-		Labels:    []string{label},
-		IsDeleted: &isDeleted,
-		Limit:     limit,
-		Offset:    offset,
-	})
 }
 
 // UpdateDraft updates a draft message.

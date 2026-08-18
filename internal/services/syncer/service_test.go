@@ -57,6 +57,9 @@ func (s *storeStub) GetByID(context.Context, string) (*models.Message, error) {
 func (s *storeStub) List(context.Context, int, int) ([]*models.Message, error) {
 	return nil, nil
 }
+func (s *storeStub) Count(context.Context, models.SearchCriteria) (int, error) {
+	return 0, nil
+}
 func (s *storeStub) Search(context.Context, models.SearchCriteria) ([]*models.Message, error) {
 	return nil, nil
 }

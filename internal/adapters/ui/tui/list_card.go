@@ -485,21 +485,12 @@ func listMessageTag(msg *models.Message) string {
 	}
 	for _, label := range msg.Labels {
 		trimmed := strings.TrimSpace(label)
-		if trimmed == "" || isSystemMailboxLabel(trimmed) {
+		if trimmed == "" || models.IsSystemMailboxLabel(trimmed) {
 			continue
 		}
 		return strings.ReplaceAll(trimmed, "_", " ")
 	}
 	return ""
-}
-
-func isSystemMailboxLabel(label string) bool {
-	switch strings.ToLower(strings.TrimSpace(label)) {
-	case "inbox", "sent", "draft", "drafts", "archive", "spam", "trash":
-		return true
-	default:
-		return false
-	}
 }
 
 func baseChipStyle(selected bool) lipgloss.Style {

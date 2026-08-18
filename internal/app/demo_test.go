@@ -22,6 +22,9 @@ func (s *demoStoreStub) GetByID(context.Context, string) (*models.Message, error
 func (s *demoStoreStub) List(context.Context, int, int) ([]*models.Message, error) {
 	return nil, nil
 }
+func (s *demoStoreStub) Count(context.Context, models.SearchCriteria) (int, error) {
+	return 0, nil
+}
 func (s *demoStoreStub) Search(context.Context, models.SearchCriteria) ([]*models.Message, error) {
 	return nil, nil
 }
@@ -74,6 +77,11 @@ func (s *memDemoStore) GetByID(_ context.Context, id string) (*models.Message, e
 	return nil, errors.New("not found")
 }
 func (s *memDemoStore) List(context.Context, int, int) ([]*models.Message, error) { return nil, nil }
+func (s *memDemoStore) Count(ctx context.Context, c models.SearchCriteria) (int, error) {
+	out, err := s.Search(ctx, c)
+	return len(out), err
+}
+
 func (s *memDemoStore) Search(_ context.Context, c models.SearchCriteria) ([]*models.Message, error) {
 	out := make([]*models.Message, 0)
 	for _, m := range s.msgs {

@@ -29,6 +29,9 @@ func (s *memStore) GetByID(context.Context, string) (*models.Message, error) {
 func (s *memStore) List(context.Context, int, int) ([]*models.Message, error) {
 	return nil, nil
 }
+func (s *memStore) Count(context.Context, models.SearchCriteria) (int, error) {
+	return 0, nil
+}
 func (s *memStore) Search(context.Context, models.SearchCriteria) ([]*models.Message, error) {
 	return nil, nil
 }

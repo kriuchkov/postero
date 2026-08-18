@@ -1572,7 +1572,7 @@ func TestFetchMessagesUsesLabelSelectionForAccountSection(t *testing.T) {
 	require.NotNil(t, cmd)
 	loaded := updateModel(t, m, cmd())
 
-	assert.Empty(t, service.lastLabelQuery)
+	assert.Equal(t, []string{"inbox"}, service.lastSearch.Labels)
 	assert.Equal(t, "Outlook", service.lastSearch.AccountID)
 	require.Len(t, loaded.messages, 1)
 	assert.Equal(t, "outlook-1", loaded.messages[0].ID)
@@ -1653,7 +1653,7 @@ func TestTagHotkeySelectsSidebarTagAndLoadsMessages(t *testing.T) {
 
 	loaded := updateModel(t, updated, cmd())
 
-	assert.Equal(t, "github", service.lastLabelQuery)
+	assert.Equal(t, []string{"github"}, service.lastSearch.Labels)
 	assert.Equal(t, "github", loaded.activeTagID)
 	require.Len(t, loaded.messages, 1)
 	assert.Equal(t, "github-1", loaded.messages[0].ID)
@@ -1676,7 +1676,7 @@ func TestSidebarArrowNavigationMovesIntoAndOutOfTags(t *testing.T) {
 	loaded := updateModel(t, updated, cmd())
 
 	assert.Equal(t, "github", loaded.activeTagID)
-	assert.Equal(t, "github", service.lastLabelQuery)
+	assert.Equal(t, []string{"github"}, service.lastSearch.Labels)
 
 	updatedAny, cmd = loaded.Update(tea.KeyMsg{Type: tea.KeyDown})
 	updated = updatedAny.(Model)
@@ -1684,7 +1684,7 @@ func TestSidebarArrowNavigationMovesIntoAndOutOfTags(t *testing.T) {
 	loaded = updateModel(t, updated, cmd())
 
 	assert.Equal(t, "work", loaded.activeTagID)
-	assert.Equal(t, "work", service.lastLabelQuery)
+	assert.Equal(t, []string{"work"}, service.lastSearch.Labels)
 
 	updatedAny, cmd = loaded.Update(tea.KeyMsg{Type: tea.KeyUp})
 	updated = updatedAny.(Model)

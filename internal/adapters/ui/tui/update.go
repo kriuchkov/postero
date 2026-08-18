@@ -694,7 +694,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatus("No messages found")
 		}
 		m.syncContentViewport(true)
-		return m, m.undoCountdownCmd()
+		// Refresh the store-side totals for the view this page belongs to.
+		return m, tea.Batch(m.undoCountdownCmd(), m.fetchMailboxCountsCmd())
+	case mailboxCountsMsg:
+		// A late reply for a mailbox the user already left must not overwrite
+		// the counters of the one they are looking at now.
+		if msg.scopeKey != "" && msg.scopeKey != m.currentMessageScopeKey() {
+			return m, nil
+		}
+		m.mailboxCounts = msg
+		return m, nil
 	case searchDebounceMsg:
 		if msg.token != m.searchToken || !m.searchDebouncing || strings.TrimSpace(msg.query) != strings.TrimSpace(m.searchQuery) {
 			return m, nil
@@ -2236,22 +2245,14 @@ func (m Model) currentMailboxAllowsMessage(msg *models.Message) bool {
 		return false
 	}
 
-	switch strings.ToLower(strings.TrimSpace(currentMailboxTitle(m))) {
-	case "inbox":
-		return !msg.IsDraft && !msg.IsDeleted && !msg.IsSpam && messageHasLabel(msg, "inbox")
-	case "sent":
-		return !msg.IsDeleted && messageHasLabel(msg, "sent")
-	case "drafts":
-		return msg.IsDraft && !msg.IsDeleted
-	case "archive":
-		return !msg.IsDeleted && messageHasLabel(msg, "archive")
-	case "trash":
-		return msg.IsDeleted
-	case "spam":
-		return !msg.IsDeleted && msg.IsSpam
-	default:
+	// Mailbox membership comes from the domain, so a message the list drops
+	// after an action is exactly the one the mailbox query would not return.
+	// A row that names no mailbox (a tag) keeps every message it was given.
+	box, ok := models.ParseMailbox(currentMailboxTitle(m))
+	if !ok {
 		return true
 	}
+	return box.Contains(msg)
 }
 
 func messageHasLabel(msg *models.Message, label string) bool {

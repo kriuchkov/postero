@@ -259,55 +259,6 @@ func TestRestoreMessagePersistsSnapshotState(t *testing.T) {
 	assert.Contains(t, msg.Labels, "inbox")
 }
 
-func TestGetDraftsExcludesDeletedMessages(t *testing.T) {
-	repo := mocks.NewMockMessageRepository(t)
-	isDraft := true
-	isDeleted := false
-	repo.On("Search", context.Background(), models.SearchCriteria{
-		IsDraft:   &isDraft,
-		IsDeleted: &isDeleted,
-		Limit:     50,
-		Offset:    10,
-	}).Return([]*models.Message{}, nil)
-
-	svc := NewService(repo)
-	_, err := svc.GetDrafts(context.Background(), 50, 10)
-
-	require.NoError(t, err)
-}
-
-func TestGetSentExcludesDeletedMessages(t *testing.T) {
-	repo := mocks.NewMockMessageRepository(t)
-	isDeleted := false
-	repo.On("Search", context.Background(), models.SearchCriteria{
-		Labels:    []string{"sent"},
-		IsDeleted: &isDeleted,
-		Limit:     50,
-		Offset:    10,
-	}).Return([]*models.Message{}, nil)
-
-	svc := NewService(repo)
-	_, err := svc.GetSent(context.Background(), 50, 10)
-
-	require.NoError(t, err)
-}
-
-func TestGetByLabelExcludesDeletedMessages(t *testing.T) {
-	repo := mocks.NewMockMessageRepository(t)
-	isDeleted := false
-	repo.On("Search", context.Background(), models.SearchCriteria{
-		Labels:    []string{"archive"},
-		IsDeleted: &isDeleted,
-		Limit:     50,
-		Offset:    10,
-	}).Return([]*models.Message{}, nil)
-
-	svc := NewService(repo)
-	_, err := svc.GetByLabel(context.Background(), "archive", 50, 10)
-
-	require.NoError(t, err)
-}
-
 func containsLabel(labels []string, expected string) bool {
 	return slices.Contains(labels, expected)
 }
@@ -517,46 +468,6 @@ func TestForwardMessageReturnsNotFoundError(t *testing.T) {
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, coreerrors.ErrMessageNotFound)
-}
-
-func TestGetAllInboxesFiltersCorrectly(t *testing.T) {
-	repo := mocks.NewMockMessageRepository(t)
-	isDraft := false
-	isSpam := false
-	isDeleted := false
-	repo.On("Search", context.Background(), models.SearchCriteria{
-		IsDraft:   &isDraft,
-		IsSpam:    &isSpam,
-		IsDeleted: &isDeleted,
-		Labels:    []string{"inbox"},
-		Limit:     20,
-		Offset:    0,
-	}).Return([]*models.Message{{ID: "inbox-1", Labels: []string{"inbox"}}}, nil)
-
-	svc := NewService(repo)
-	msgs, err := svc.GetAllInboxes(context.Background(), 20, 0)
-
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, "inbox-1", msgs[0].ID)
-}
-
-func TestGetFlaggedFiltersStarred(t *testing.T) {
-	repo := mocks.NewMockMessageRepository(t)
-	isStarred := true
-	repo.On("Search", context.Background(), models.SearchCriteria{
-		IsStarred: &isStarred,
-		Limit:     10,
-		Offset:    0,
-	}).Return([]*models.Message{{ID: "starred-1", IsStarred: true}}, nil)
-
-	svc := NewService(repo)
-	msgs, err := svc.GetFlagged(context.Background(), 10, 0)
-
-	require.NoError(t, err)
-	require.Len(t, msgs, 1)
-	assert.Equal(t, "starred-1", msgs[0].ID)
-	assert.True(t, msgs[0].IsStarred)
 }
 
 func TestUpdateDraftAppliesPartialFields(t *testing.T) {
