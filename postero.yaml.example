@@ -1,0 +1,96 @@
+accounts:
+  - name: "personal"
+    provider: "gmail"
+    email: "user@example.com"
+    username: "user@example.com"
+    oauth2:
+      client_id: "your-client-id"
+      # The client secret is NOT stored here. Save it with
+      # `pstr auth set-secret personal`, or set:
+      # client_secret_cmd: ["pass", "show", "oauth/personal-secret"]
+    # Secrets are NEVER stored in this file. Use the OS keychain
+    # (`pstr auth set personal`) or a password_cmd.
+    imap:
+      # password_cmd: ["pass", "show", "email/personal-imap"]
+    smtp:
+      # password_cmd: ["pass", "show", "email/personal-smtp"]
+    # Shared password_cmd when both protocols use the same secret.
+    # password_cmd: ["pass", "show", "email/personal"]
+
+data_path: "~/.local/share/postero"
+
+tui:
+  # Number of messages fetched per page in the interactive list.
+  list_page_size: 30
+  # How close the cursor should get to the bottom before fetching the next page.
+  list_prefetch_ahead: 5
+  # Spinner frame interval for loading indicators, in milliseconds.
+  loading_tick_ms: 120
+
+ai:
+  default_compose_template: "compose-default"
+  default_reply_template: "reply-default"
+  providers:
+    openai:
+      type: "openai"
+      model: "gpt-4.1-mini"
+      # Prefer setting secrets through env vars, for example:
+      # POSTERO_AI_PROVIDERS_OPENAI_API_KEY=...
+    gemini:
+      type: "gemini"
+      model: "gemini-2.5-flash"
+      # POSTERO_AI_PROVIDERS_GEMINI_API_KEY=...
+    anthropic:
+      type: "anthropic"          # Claude via the Anthropic Messages API
+      model: "claude-opus-5"     # or claude-sonnet-5, claude-haiku-4-5, ...
+      # base_url defaults to https://api.anthropic.com/v1
+      # Store the key in the OS keychain (never inline):
+      #   pstr auth set-ai anthropic
+      # or provide an api_key_cmd that prints it.
+    openclaw:
+      type: "openclaw"           # local OpenClaw agent (headless `agent exec`)
+      # command defaults to: [openclaw, agent, exec, --message-file, -]
+    # A generic local agent (Claude Code, opencode, any CLI). The prompt is sent
+    # on stdin; the reply is read from stdout. Runs as argv, never via a shell.
+    agent:
+      type: "command"
+      command: ["claude", "-p"]  # e.g. Claude Code; or your own agent CLI
+  templates:
+    compose-default:
+      mode: "compose"
+      provider: "openai"
+      temperature: 0.4
+      system_prompt: |
+        You write concise, practical email drafts.
+        Return JSON only with keys "subject" and "body".
+      prompt: |
+        Draft a new email.
+        Instruction: {{ .Instruction }}
+        From: {{ .From }}
+        To: {{ join .To ", " }}
+        Cc: {{ join .Cc ", " }}
+        Subject hint: {{ .Subject }}
+        Body hint: {{ .Body }}
+    reply-default:
+      mode: "reply"
+      provider: "gemini"
+      temperature: 0.2
+      system_prompt: |
+        You write careful email replies.
+        Return JSON only with keys "subject" and "body".
+      prompt: |
+        Draft a reply.
+        Instruction: {{ .Instruction }}
+        Reply all: {{ .ReplyAll }}
+        Original subject: {{ .Original.Subject }}
+        Original from: {{ .Original.From }}
+        Original body:
+        {{ .Original.Body }}
+
+# Filters allow you to process rendering of specific MIME types
+# Make sure to install the binaries (e.g., w3m) used in the commands
+filters:
+  # Render HTML emails safely using w3m:
+  text/html: "w3m -T text/html -dump"
+  # Or use lynx if you prefer:
+  # text/html: "lynx -dump -stdin"

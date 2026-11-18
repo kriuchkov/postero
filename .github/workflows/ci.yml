@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  lint:
+    name: Linter
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: "go.mod"
+      - name: Run linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    env:
+      # go-sqlite3 is a cgo package; ubuntu-latest ships gcc.
+      CGO_ENABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: "go.mod"
+      # -short skips the testcontainers integration suite (needs a live mail
+      # server); those run separately via `make integration-test`.
+      - name: Run tests
+        run: go test -short -v ./...
